@@ -1,0 +1,10 @@
+{
+  "name": "@trading/market-data",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@trading/shared": "*",
+    "dotenv": "^16.4.5"
+  }
+}

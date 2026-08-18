@@ -1,0 +1,35 @@
+{
+  "name": "trading-algo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "High-throughput Kafka streaming technical trading platform for the Indian market",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "services/*",
+    "frontend"
+  ],
+  "scripts": {
+    "dev:market-data": "tsx watch services/market-data/src/index.ts",
+    "dev:fundamentals": "tsx watch services/fundamentals/src/index.ts",
+    "dev:algorithm": "tsx watch services/algorithm-engine/src/index.ts",
+    "dev:executor": "tsx watch services/executor/src/index.ts",
+    "dev:news": "tsx watch services/news/src/index.ts",
+    "dev:api": "tsx watch services/api/src/index.ts",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "typecheck": "tsc -p tsconfig.json --noEmit && npm --prefix frontend run build",
+    "build": "tsc -p tsconfig.json",
+    "start:all": "powershell -ExecutionPolicy Bypass -File scripts/run-all.ps1",
+    "stop:all": "powershell -ExecutionPolicy Bypass -File scripts/stop-all.ps1",
+    "restart": "powershell -ExecutionPolicy Bypass -File scripts/restart.ps1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "@types/pg": "^8.11.5",
+    "@types/ws": "^8.5.10",
+    "tsx": "^4.7.2",
+    "typescript": "^5.4.5"
+  }
+}

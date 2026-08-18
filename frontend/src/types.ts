@@ -1,0 +1,211 @@
+export interface Instrument {
+  id: number;
+  symbol: string;
+  name: string;
+  sector: string;
+  isin: string;
+  exchange: string;
+  marketCap: number;
+  basePrice: number;
+}
+
+export interface Snapshot {
+  instrumentId: number;
+  symbol: string;
+  price: number;
+  prevClose: number;
+  change: number;
+  changePct: number;
+  dayOpen: number;
+  dayHigh: number;
+  dayLow: number;
+  dayVolume: number;
+  ts: number;
+}
+
+export interface MarketOverview {
+  index: { symbol: string; price: number; changePct: number; timestamp: number };
+  market: { advancers: number; decliners: number; unchanged: number; total: number };
+  sectorPerformance: { sector: string; changePct: number; count: number }[];
+  gainers: Snapshot[];
+  losers: Snapshot[];
+  topVolume: Snapshot[];
+}
+
+export interface Candle {
+  ts: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface IndicatorSet {
+  symbol: string;
+  timeframe: string;
+  ts: number[];
+  close: number[];
+  sma20: (number | null)[];
+  sma50: (number | null)[];
+  sma200: (number | null)[];
+  ema12: (number | null)[];
+  ema26: (number | null)[];
+  rsi: (number | null)[];
+  macd: (number | null)[];
+  macdSignal: (number | null)[];
+  macdHist: (number | null)[];
+  bbUpper: (number | null)[];
+  bbMiddle: (number | null)[];
+  bbLower: (number | null)[];
+  atr: (number | null)[];
+  stochK: (number | null)[];
+  stochD: (number | null)[];
+  stLine: (number | null)[];
+  stDir: (number | null)[];
+}
+
+export interface Fundamentals {
+  instrument_id: number;
+  sector: string | null;
+  industry: string | null;
+  description: string | null;
+  market_cap: number;
+  pe: number;
+  pb: number;
+  ps: number;
+  peg: number;
+  roe: number;
+  roce: number;
+  roa: number;
+  debt_to_equity: number;
+  current_ratio: number;
+  quick_ratio: number;
+  gross_margin: number;
+  operating_margin: number;
+  net_margin: number;
+  revenue: number;
+  revenue_growth: number;
+  net_income: number;
+  net_income_growth: number;
+  employees: number;
+  dividend_yield: number;
+  eps: number;
+  book_value: number;
+  beta: number;
+  fifty_two_week_high: number;
+  fifty_two_week_low: number;
+  avg_volume: number;
+  promoter_holding: number;
+  fii_holding: number;
+  investability_score: number;
+  investability_grade: string;
+}
+
+export interface Relation {
+  id: number;
+  instrumentId: number;
+  relationType: string;
+  entityName: string;
+  entitySymbol: string | null;
+  weight: number;
+  note: string | null;
+}
+
+export interface Signal {
+  id: number;
+  instrumentId: number;
+  symbol: string;
+  strategy: string;
+  direction: 'BUY' | 'SELL';
+  strength: number;
+  price: number;
+  reason: string;
+  indicatorSnapshot: Record<string, unknown> | null;
+  ts: number;
+}
+
+export interface NewsItem {
+  id: number;
+  instrumentId: number | null;
+  symbol?: string | null;
+  headline: string;
+  summary: string | null;
+  source: string;
+  category: string;
+  sentiment: string;
+  impact: string;
+  tags: string[];
+  publishedAt: number;
+}
+
+export interface AlgorithmConfig {
+  strategy: string;
+  enabled: boolean;
+  params: Record<string, number>;
+}
+
+export interface Order {
+  id: number;
+  accountId: number;
+  instrumentId: number;
+  symbol: string;
+  side: 'BUY' | 'SELL';
+  orderType: 'MARKET' | 'LIMIT';
+  quantity: number;
+  limitPrice: number | null;
+  status: string;
+  filledQty: number;
+  avgPrice: number | null;
+  strategy: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface Position {
+  instrumentId: number;
+  symbol: string;
+  name: string | null;
+  sector: string | null;
+  quantity: number;
+  avgPrice: number;
+  lastPrice: number;
+  marketValue: number;
+  unrealizedPnl: number;
+  unrealizedPnlPct: number;
+  realizedPnl: number;
+  dayPnl: number;
+}
+
+export interface Portfolio {
+  account: { id: number; cash: number; initialCapital: number; equity: number };
+  summary: {
+    invested: number;
+    unrealizedPnl: number;
+    realizedPnl: number;
+    dayPnl: number;
+    totalPnl: number;
+    totalPnlPct: number;
+    availableCash: number;
+  };
+  positions: Position[];
+  equityCurve: { ts: number; equity: number }[];
+}
+
+export interface Trade {
+  id: number;
+  orderId: number | null;
+  instrumentId: number;
+  symbol: string;
+  side: string;
+  quantity: number;
+  price: number;
+  realizedPnl: number | null;
+  strategy: string | null;
+  ts: number;
+}
+
+export interface WsMessage<T = unknown> {
+  type: string;
+  payload: T;
+}

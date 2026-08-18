@@ -1,0 +1,13 @@
+{
+  "name": "@trading/shared",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "kafkajs": "^2.2.4",
+    "pg": "^8.11.5",
+    "pino": "^8.19.0"
+  }
+}
