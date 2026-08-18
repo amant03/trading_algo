@@ -1,0 +1,124 @@
+name: Backend Automation
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: backend-automation
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: trading_app
+          POSTGRES_PASSWORD: trading_pass
+          POSTGRES_DB: trading_platform
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U trading_app -d trading_platform"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      kafka:
+        image: apache/kafka:3.9.0
+        ports:
+          - 9092:9092
+        env:
+          KAFKA_NODE_ID: 1
+          KAFKA_PROCESS_ROLES: broker,controller
+          KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://127.0.0.1:9092
+          KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+          KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+          KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+        options: >-
+          --health-cmd "kafka-broker-api-versions --bootstrap-server 127.0.0.1:9092 || exit 1"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply database schema
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client > /dev/null
+          PGPASSWORD=trading_pass psql -h 127.0.0.1 -U trading_app -d trading_platform -f scripts/db/schema.sql
+
+      - name: Start backend services
+        run: |
+          mkdir -p .infra/logs
+          for svc in market-data fundamentals news algorithm-engine executor api; do
+            node node_modules/tsx/dist/cli.mjs services/$svc/src/index.ts \
+              > .infra/logs/$svc.log 2>&1 &
+            echo "Started $svc (PID $!)"
+          done
+
+      - name: Wait for services to initialize
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8080/api/health > /dev/null 2>&1; then
+              echo "API ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "API failed to start within 60s"
+          cat .infra/logs/api.log
+          exit 1
+
+      - name: Verify pipeline
+        run: |
+          echo "=== Health ==="
+          curl -sf http://127.0.0.1:8080/api/health | jq .
+          echo "=== Overview ==="
+          curl -sf http://127.0.0.1:8080/api/market/overview | jq '{index: .index.price, adv: .market.advancers, dec: .market.decliners}'
+          echo "=== Signals ==="
+          curl -sf http://127.0.0.1:8080/api/signals | jq 'length' -r
+
+      - name: Run pipeline (8 minutes)
+        run: |
+          echo "Pipeline running at $(date -u +%Y-%m-%dT%H:%M:%SZ)..."
+          sleep 480
+          echo "Pipeline window complete at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+      - name: Generate report
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/report.ts
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-logs-${{ github.run_id }}
+          path: .infra/logs/
+          retention-days: 7
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: report-${{ github.run_id }}
+          path: scripts/ci/report-latest.json
+          retention-days: 30

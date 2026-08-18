@@ -1,0 +1,51 @@
+{
+  "timestamp": "2026-08-18T20:26:55.327Z",
+  "instruments": 52,
+  "candles": 254791,
+  "signals": 10468,
+  "orders": 3296,
+  "trades": 3294,
+  "openPositions": 15,
+  "news": 1813,
+  "account": {
+    "cash_balance": "583954.74",
+    "equity": "583954.74"
+  },
+  "latestSignals": [
+    {
+      "symbol": "APOLLOHOSP",
+      "direction": "SELL",
+      "strategy": "ma_cross",
+      "reason": "Death cross: SMA20 crossed below SMA50",
+      "ts": "2026-08-18T17:44:15.179Z"
+    },
+    {
+      "symbol": "EICHERMOT",
+      "direction": "SELL",
+      "strategy": "rsi_reversal",
+      "reason": "RSI(14) 67.2 fell out of overbought",
+      "ts": "2026-08-18T17:44:15.179Z"
+    },
+    {
+      "symbol": "BPCL",
+      "direction": "BUY",
+      "strategy": "rsi_reversal",
+      "reason": "RSI(14) 36.8 rebounded out of oversold",
+      "ts": "2026-08-18T17:44:15.179Z"
+    },
+    {
+      "symbol": "BHARTIARTL",
+      "direction": "BUY",
+      "strategy": "ma_cross",
+      "reason": "Golden cross: SMA20 crossed above SMA50",
+      "ts": "2026-08-18T17:44:15.179Z"
+    },
+    {
+      "symbol": "HINDALCO",
+      "direction": "SELL",
+      "strategy": "bb_breakout",
+      "reason": "Close broke below lower Bollinger band (2x std dev)",
+      "ts": "2026-08-18T17:44:15.179Z"
+    }
+  ]
+}

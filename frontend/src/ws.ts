@@ -69,7 +69,8 @@ export const useLive = create<LiveState>((set, get) => ({
 export function connectLive() {
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  socket = new WebSocket(`${proto}://${location.host}/ws`);
+  const url = import.meta.env.VITE_WS_URL ?? `${proto}://${location.host}/ws`;
+  socket = new WebSocket(url);
 
   socket.onopen = () => {
     retry = 0;
