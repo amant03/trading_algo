@@ -44,9 +44,11 @@ jobs:
           KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
           KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
           KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+          KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+          KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
           KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
         options: >-
-          --health-cmd "kafka-broker-api-versions --bootstrap-server 127.0.0.1:9092 || exit 1"
+          --health-cmd "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1 || exit 1"
           --health-interval 10s
           --health-timeout 10s
           --health-retries 15
