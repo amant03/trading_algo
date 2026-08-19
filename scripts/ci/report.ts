@@ -1,11 +1,8 @@
-import 'dotenv/config';
-import pg from 'pg';
+import { pool } from '@trading/shared';
 import { writeFileSync } from 'fs';
 import { join } from 'path';
 
 async function main() {
-  const pool = new pg.Pool();
-
   const [instruments, candles, signals, orders, trades, positions, account, latestSignals, newsCount] = await Promise.all([
     pool.query('SELECT COUNT(*) as count FROM instruments'),
     pool.query('SELECT COUNT(*) as count FROM candles'),
