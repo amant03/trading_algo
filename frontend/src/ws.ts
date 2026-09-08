@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { get } from './api';
-import type { Snapshot, Signal, NewsItem, Order, Trade, MarketOverview, Instrument } from './types';
+import type { Snapshot, Signal, NewsItem, Order, Trade, MarketOverview, Instrument, StockAnalysis, Sparkline } from './types';
 
 export interface LiveCandle {
   instrumentId: number;
@@ -14,7 +14,7 @@ export interface LiveCandle {
   volume: number;
 }
 
-export type FeedMode = 'live' | 'polling' | 'snapshot' | 'offline';
+export type FeedMode = 'live' | 'relay' | 'polling' | 'snapshot' | 'offline';
 
 interface LiveState {
   mode: FeedMode;
@@ -29,12 +29,15 @@ interface LiveState {
   trades: Trade[];
   instruments: Instrument[];
   snapshotAt: number | null;
+  fundamentals: Record<string, StockAnalysis>;
+  sparklines: Record<string, Sparkline>;
   setMode: (m: FeedMode) => void;
   setReady: (v: boolean) => void;
   touch: () => void;
   setOverview: (o: MarketOverview | null) => void;
   setInstruments: (items: Instrument[]) => void;
   setSnapshotAt: (t: number | null) => void;
+  setAnalysis: (f: Record<string, StockAnalysis>, s: Record<string, Sparkline>) => void;
   updateSnapshots: (items: Snapshot[]) => void;
   updateCandles: (items: LiveCandle[]) => void;
   addSignal: (s: Signal) => void;
@@ -48,7 +51,8 @@ interface LiveState {
 let socket: WebSocket | null = null;
 let retry = 0;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
-let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+let relayTimer: ReturnType<typeof setInterval> | null = null;
+let snapshotTimer: ReturnType<typeof setInterval> | null = null;
 
 export const useLive = create<LiveState>((set, get) => ({
   mode: 'offline',
@@ -63,12 +67,15 @@ export const useLive = create<LiveState>((set, get) => ({
   trades: [],
   instruments: [],
   snapshotAt: null,
+  fundamentals: {},
+  sparklines: {},
   setMode: (m) => set({ mode: m }),
   setReady: (v) => set({ ready: v }),
   touch: () => set({ lastEventAt: Date.now() }),
   setOverview: (o) => set({ overview: o }),
   setInstruments: (items) => set({ instruments: items }),
   setSnapshotAt: (t) => set({ snapshotAt: t }),
+  setAnalysis: (f, s) => set((st) => ({ fundamentals: { ...st.fundamentals, ...f }, sparklines: { ...st.sparklines, ...s } })),
   updateSnapshots: (items) => {
     const snapshots = { ...get().snapshots };
     for (const item of items) snapshots[item.symbol] = item;
@@ -104,7 +111,8 @@ interface QuoteLike {
 }
 
 /** Map /api/instruments rows or snapshot.json quotes into Snapshot shape. */
-function quotesToSnapshots(list: QuoteLike[]): Snapshot[] {  const now = Date.now();
+function quotesToSnapshots(list: QuoteLike[]): Snapshot[] {
+  const now = Date.now();
   return list
     .filter((q) => q.symbol)
     .map((q) => {
@@ -171,10 +179,10 @@ async function pollOnce(): Promise<boolean> {
 
 function startPolling(): void {
   if (pollTimer) return;
-    const tick = async () => {
+  const tick = async () => {
     if (useLive.getState().mode === 'live') return; // WS took over
     const ok = await pollOnce();
-    if (!ok && useLive.getState().mode !== 'snapshot') {
+    if (!ok && useLive.getState().mode === 'polling') {
       useLive.getState().setMode('offline');
     }
   };
@@ -189,6 +197,49 @@ function stopPolling(): void {
   }
 }
 
+function startRelay(): void {
+  if (relayTimer) return;
+  // Near-live quotes keep coming even on the static deploy (no backend): the
+  // /api/live serverless function proxies Yahoo and we overlay the prices.
+  const tick = async () => {
+    const st = useLive.getState();
+    if (st.mode === 'live') return;
+    try {
+      const res = await fetch('/api/live', { cache: 'no-store' });
+      if (!res.ok) throw new Error(`relay ${res.status}`);
+      const data = (await res.json()) as { ts: number; quotes: QuoteLike[] };
+      if (!data.quotes?.length) throw new Error('no quotes');
+      const live = useLive.getState();
+      const hasSnaps = Object.keys(live.snapshots).length > 0;
+      live.updateSnapshots(quotesToSnapshots(data.quotes));
+      if (!hasSnaps) live.setInstruments(toInstruments(data.quotes));
+      live.touch();
+      if (live.mode === 'snapshot' || live.mode === 'relay') {
+        const ov = live.overview;
+        live.setOverview(
+          ov
+            ? { ...ov, updatedAt: data.ts }
+            : { index: { symbol: 'NIFTY 50', price: 0, changePct: 0, timestamp: data.ts }, market: { advancers: 0, decliners: 0, unchanged: 0, total: 0 }, sectorPerformance: [], gainers: [], losers: [], topVolume: [], updatedAt: data.ts },
+        );
+        live.setSnapshotAt(data.ts);
+        live.setMode('relay');
+      }
+    } catch {
+      const live = useLive.getState();
+      if (live.mode === 'relay') live.setMode('snapshot');
+    }
+  };
+  void tick();
+  relayTimer = setInterval(tick, 15_000);
+}
+
+function stopRelay(): void {
+  if (relayTimer) {
+    clearInterval(relayTimer);
+    relayTimer = null;
+  }
+}
+
 /** Last-resort datasets: CI commits a fresh snapshot to the automation-data
  *  branch on every run (fetched live, no redeploy needed); the bundle also
  *  ships frontend/public/snapshot.json as a second fallback. */
@@ -196,6 +247,30 @@ const SNAPSHOT_URLS = [
   'https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/snapshot.json',
   '/snapshot.json',
 ];
+
+const ANALYSIS_URLS = [
+  'https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/analysis.json',
+  '/analysis.json',
+];
+
+async function loadAnalysis(): Promise<boolean> {
+  for (const url of ANALYSIS_URLS) {
+    try {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) continue;
+      const data = (await res.json()) as {
+        stocks?: Record<string, StockAnalysis>;
+        sparklines?: Record<string, Sparkline>;
+      };
+      if (!data.stocks) continue;
+      useLive.getState().setAnalysis(data.stocks, data.sparklines ?? {});
+      return true;
+    } catch {
+      continue;
+    }
+  }
+  return false;
+}
 
 async function loadCiSnapshot(): Promise<boolean> {
   for (const url of SNAPSHOT_URLS) {
@@ -205,7 +280,8 @@ async function loadCiSnapshot(): Promise<boolean> {
       const data = (await snap.json()) as {
         generatedAt?: string;
         overview?: MarketOverview | null;
-        instruments?: Array<Record<string, unknown> & QuoteLike> | null;        signals?: Signal[] | null;
+        instruments?: Array<Record<string, unknown> & QuoteLike> | null;
+        signals?: Signal[] | null;
         news?: NewsItem[] | null;
       };
       if (!data.instruments?.length) continue;
@@ -217,6 +293,8 @@ async function loadCiSnapshot(): Promise<boolean> {
       if (data.news?.length) live.replaceNews(data.news);
       if (data.generatedAt) live.setSnapshotAt(new Date(data.generatedAt).getTime());
       if (live.mode === 'offline') live.setMode('snapshot');
+      void loadAnalysis();
+      startRelay();
       return true;
     } catch {
       continue;
@@ -225,22 +303,28 @@ async function loadCiSnapshot(): Promise<boolean> {
   return false;
 }
 
+/** Snapshot loading retries every 30s until it lands, so a transient GitHub
+ *  raw fetch failure no longer leaves the UI stuck on the offline gate. */
+function ensureSnapshot(): void {
+  if (snapshotTimer) return;
+  const attempt = async () => {
+    const st = useLive.getState();
+    if (st.mode !== 'offline' || Object.keys(st.snapshots).length) return;
+    const ok = await loadCiSnapshot();
+    if (!ok) console.warn('[live] snapshot unavailable, retrying in 30s');
+  };
+  void attempt();
+  snapshotTimer = setInterval(attempt, 30_000);
+}
+
 export function connectLive() {
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const url = import.meta.env.VITE_WS_URL ?? `${proto}://${location.host}/ws`;
 
-  // If no backend is reachable at all, fall back to the last CI-committed
-  // snapshot so the terminal never renders an empty shell.
-  if (!fallbackTimer) {
-    fallbackTimer = setTimeout(async () => {
-      const st = useLive.getState();
-      if (st.mode === 'offline' && !Object.keys(st.snapshots).length) {
-        const ok = await loadCiSnapshot();
-        if (!ok) console.warn('[live] no CI snapshot available');
-      }
-    }, 6000);
-  }
+  // No backend reachable at boot? Load the last CI-committed snapshot (and
+  // keep retrying) so the terminal never renders an empty shell.
+  ensureSnapshot();
 
   try {
     socket = new WebSocket(url);
@@ -294,6 +378,8 @@ export function connectLive() {
   socket.onclose = () => {
     const st = useLive.getState();
     if (st.mode === 'live') st.setMode('offline');
+    // If the snapshot/relay already took over, don't keep reconnecting to /ws.
+    if (st.mode === 'snapshot' || st.mode === 'relay') return;
     startPolling(); // degrade to REST polling instead of a blank screen
     const delay = Math.min(1000 * 2 ** retry, 15000);
     retry += 1;

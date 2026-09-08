@@ -115,6 +115,12 @@ jobs:
       - name: Generate report + UI snapshot
         run: node node_modules/tsx/dist/cli.mjs scripts/ci/report.ts
 
+      # Deep fundamentals: pulls real company data from Yahoo quoteSummary and
+      # scores every stock with Buffett / Peter Lynch / Graham screens. Writes
+      # frontend/public/analysis.json for the deployed UI (baked into snapshot).
+      - name: Generate fundamentals & analyst model
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/fundamentals.ts
+
       - name: Job summary
         if: always()
         run: |
@@ -157,13 +163,17 @@ jobs:
           ts=$(date -u +%Y%m%d-%H%M%S)
           cp scripts/ci/report-latest.json "reports/run-$ts-$GITHUB_RUN_ID.json"
           cp scripts/ci/report-latest.json reports/latest.json
-          git add reports/ frontend/public/snapshot.json
+          git add reports/
+          git add frontend/public/snapshot.json 2>/dev/null || true
+          git add frontend/public/analysis.json 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "Nothing new to commit"
             exit 0
           fi
           git commit -m "chore(automation): pipeline report #$GITHUB_RUN_NUMBER"
-          git push origin HEAD:automation-data
+          # automation-data is an append-only artifact branch — concurrent runs
+          # can race, so force the ref to the latest snapshot (last-writer-wins).
+          git push --force origin HEAD:automation-data
           if [ "${{ github.event.schedule }}" = "0 3 * * *" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             git push origin HEAD:main || echo "main moved concurrently — snapshot stays on automation-data branch"
           fi

@@ -9,13 +9,17 @@ import SignalFeed from '../components/SignalFeed';
 import NewsFeed from '../components/NewsFeed';
 
 function SparkHistory({ symbol }: { symbol: string }) {
-  const [candles, setCandles] = useState<Candle[]>([]);
+  const stored = useLive((s) => s.sparklines)[symbol];
+  const [closes, setCloses] = useState<number[]>([]);
   useEffect(() => {
+    if (stored?.length) {
+      setCloses(stored.map((p) => p[1]));
+      return;
+    }
     get<{ candles: Candle[] }>(`/api/instruments/${symbol}/candles?timeframe=1d&limit=40`)
-      .then((r) => setCandles(r.candles))
+      .then((r) => setCloses(r.candles.map((c) => c.close)))
       .catch(() => {});
-  }, [symbol]);
-  const closes = candles.map((c) => c.close);
+  }, [symbol, stored]);
   return <Sparkline points={closes} up={closes.length ? closes[closes.length - 1] >= closes[0] : true} />;
 }
 
@@ -45,6 +49,7 @@ export default function Dashboard() {
   const news = useLive((s) => s.news);
   const overview = useLive((s) => s.overview);
   const storeInstruments = useLive((s) => s.instruments);
+  const fundamentals = useLive((s) => s.fundamentals);
   const [instruments, setInstruments] = useState<Instrument[]>([]);
 
   useEffect(() => {
@@ -61,6 +66,14 @@ export default function Dashboard() {
     const losers = [...list].sort((a, b) => a.changePct - b.changePct).slice(0, 8);
     return { list, bySym, gainers, losers };
   }, [snapshots]);
+
+  // Analyst picks: best overall verdict score with positive margin of safety.
+  const picks = useMemo(() => {
+    const arr = Object.values(fundamentals).filter((f) => f.verdict?.score).map((f) => f);
+    return arr
+      .sort((a, b) => b.verdict.score - a.verdict.score || b.verdict.marginOfSafety - a.verdict.marginOfSafety)
+      .slice(0, 6);
+  }, [fundamentals]);
 
   const total = live.list.length || overview?.market.total || 0;
   const adv = overview?.market.advancers ?? live.list.filter((s) => s.changePct > 0).length;
@@ -232,6 +245,49 @@ export default function Dashboard() {
             <NewsFeed items={news} limit={8} />
           </div>
         </div>
+      </div>
+
+      <div className="panel reveal reveal-1" style={{ marginBottom: 16 }}>
+        <div className="panel-title">
+          <h3>Analyst Picks</h3>
+          <span className="hint">Buffett · Lynch · Graham blended score</span>
+        </div>
+        {picks.length ? (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Name</th>
+                  <th>Last</th>
+                  <th>Fair Value</th>
+                  <th>MoS</th>
+                  <th>Rating</th>
+                  <th>Score</th>
+                </tr>
+              </thead>
+              <tbody>
+                {picks.map((p) => (
+                  <tr key={p.symbol} onClick={() => navigate(`/stock/${p.symbol}`)}>
+                    <td className="sym-cell">{p.symbol}</td>
+                    <td className="name-cell">{p.name ?? ''}</td>
+                    <td className="mono">{fmt(p.price)}</td>
+                    <td className="mono">{fmt(p.verdict.fairValueMid)}</td>
+                    <td className={cls('mono', p.verdict.marginOfSafety >= 0 ? 'up' : 'down')}>
+                      {p.verdict.marginOfSafety > 0 ? '+' : ''}{p.verdict.marginOfSafety}%
+                    </td>
+                    <td className="mono" style={{ color: p.verdict.rating === 'Strong Buy' || p.verdict.rating === 'Buy' ? 'var(--up)' : p.verdict.rating === 'Hold' ? 'var(--amber)' : 'var(--down)' }}>
+                      {p.verdict.rating}
+                    </td>
+                    <td className="mono"><b>{p.verdict.score}</b> <span className="dim">/100</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="empty">Analyst model builds with each automation run.</div>
+        )}
       </div>
 
       <div className="panel reveal reveal-1">

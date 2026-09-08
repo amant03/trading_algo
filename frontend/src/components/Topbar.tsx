@@ -12,6 +12,7 @@ const NAV = [
 
 const MODE_LABEL: Record<FeedMode, string> = {
   live: 'LIVE FEED',
+  relay: 'LIVE QUOTES',
   polling: 'REST POLLING',
   snapshot: 'LAST CI SNAPSHOT',
   offline: 'OFFLINE',
@@ -19,6 +20,7 @@ const MODE_LABEL: Record<FeedMode, string> = {
 
 const MODE_COLOR: Record<FeedMode, { fg: string; bg: string; dot: string }> = {
   live: { fg: 'var(--up)', bg: 'rgba(0,184,119,0.08)', dot: 'var(--up)' },
+  relay: { fg: 'var(--up)', bg: 'rgba(0,184,119,0.08)', dot: 'var(--up)' },
   polling: { fg: 'var(--amber)', bg: 'rgba(255,179,71,0.08)', dot: 'var(--amber)' },
   snapshot: { fg: '#4cc9f0', bg: 'rgba(76,201,240,0.08)', dot: '#4cc9f0' },
   offline: { fg: 'var(--down)', bg: 'rgba(255,92,92,0.08)', dot: 'var(--down)' },
@@ -62,11 +64,13 @@ export default function Topbar() {
           title={
             mode === 'live'
               ? 'WebSocket stream connected to the backend'
-              : mode === 'polling'
-                ? 'Backend reachable over REST — polling every 4s'
-                : mode === 'snapshot'
-                  ? 'No live backend — showing last automation snapshot'
-                  : 'No backend and no snapshot available'
+              : mode === 'relay'
+                ? 'Live NSE quotes streaming via serverless relay — strategy data from CI snapshot'
+                : mode === 'polling'
+                  ? 'Backend reachable over REST — polling every 4s'
+                  : mode === 'snapshot'
+                    ? 'No live backend — showing last automation snapshot'
+                    : 'No backend and no snapshot available'
           }
           style={{ color: color.fg, borderColor: color.fg + '4d', background: color.bg }}
         >

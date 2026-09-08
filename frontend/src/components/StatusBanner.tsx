@@ -19,10 +19,18 @@ export default function StatusBanner() {
           {updated ? <em> Updated {timeAgo(updated)}</em> : null}
         </span>
       )}
+      {mode === 'relay' && (
+        <span>
+          Live NSE quotes via relay — prices stream in near-real-time during market hours.
+          Strategy signals &amp; reports come from the latest CI snapshot.
+          {updated ? <em> Prices updated {timeAgo(updated)}</em> : null}
+        </span>
+      )}
       {mode === 'snapshot' && (
         <span>
-          No live backend right now — showing the last automation snapshot.
-          The GitHub Actions pipeline refreshes this data on every run.
+          No live feed right now — showing the last automation snapshot.
+          The GitHub Actions pipeline refreshes this data on every run,
+          and live prices kick in during market hours.
           {updated ? <em> Snapshot from {timeAgo(updated)}</em> : null}
         </span>
       )}

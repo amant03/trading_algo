@@ -210,3 +210,66 @@ export interface WsMessage<T = unknown> {
   type: string;
   payload: T;
 }
+
+// ---- Analyst model (scripts/ci/fundamentals.ts -> analysis.json) ----
+
+export interface ScreenResult {
+  score: number;
+  grade: string;
+  thesis: string;
+  flags: string[];
+}
+
+export interface StockAnalysisMetrics {
+  pe: number | null;
+  pb: number | null;
+  ps: number | null;
+  peg: number | null;
+  roe: number | null;
+  roa: number | null;
+  netMargin: number | null;
+  operatingMargin: number | null;
+  grossMargin: number | null;
+  revenueGrowth: number | null;
+  earningsGrowth: number | null;
+  growth: number | null;
+  debtToEquity: number | null;
+  currentRatio: number | null;
+  quickRatio: number | null;
+  dividendYield: number | null;
+  eps: number | null;
+  bookValue: number | null;
+  beta: number | null;
+  fiftyTwoWeekHigh: number | null;
+  fiftyTwoWeekLow: number | null;
+  avgVolume: number | null;
+  promoterHolding: number | null;
+  fiiHolding: number | null;
+}
+
+export interface StockAnalysis {
+  symbol: string;
+  name: string | null;
+  sector: string | null;
+  industry: string | null;
+  description: string | null;
+  price: number;
+  marketCap: number | null;
+  metrics: StockAnalysisMetrics;
+  screens: { buffett: ScreenResult; lynch: ScreenResult; graham: ScreenResult };
+  verdict: {
+    score: number;
+    grade: string;
+    rating: 'Strong Buy' | 'Buy' | 'Hold' | 'Sell' | 'Strong Sell';
+    fairValueMid: number;
+    fairValueLow: number;
+    fairValueHigh: number;
+    marginOfSafety: number;
+    targetMean: number | null;
+    analysts: number | null;
+    summary: string;
+  };
+}
+
+export type SparklinePoint = [number, number]; // [ts, close]
+export type Sparkline = SparklinePoint[];
