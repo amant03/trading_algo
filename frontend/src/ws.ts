@@ -284,10 +284,13 @@ async function loadCiSnapshot(): Promise<boolean> {
         signals?: Signal[] | null;
         news?: NewsItem[] | null;
       };
-      if (!data.instruments?.length) continue;
+      const viable = data.instruments?.length || data.signals?.length || data.news?.length;
+      if (!viable) continue;
       const live = useLive.getState();
-      live.updateSnapshots(quotesToSnapshots(data.instruments));
-      live.setInstruments(toInstruments(data.instruments));
+      if (data.instruments?.length) {
+        live.updateSnapshots(quotesToSnapshots(data.instruments));
+        live.setInstruments(toInstruments(data.instruments));
+      }
       if (data.overview) live.setOverview(data.overview);
       if (data.signals?.length) live.replaceSignals(data.signals);
       if (data.news?.length) live.replaceNews(data.news);

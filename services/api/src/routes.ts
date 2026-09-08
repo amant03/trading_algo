@@ -74,7 +74,13 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
   });
 
   app.get('/api/instruments', async () => {
-    return instruments.map((inst) => {
+    // If the API booted before market-data synced the seed into the DB, fall
+    // back to a fresh DB read so consumers (incl. the CI UI snapshot) get the
+    // full instrument list instead of [].
+    const list = instruments.length
+      ? instruments
+      : (await query<Instrument>('SELECT * FROM instruments ORDER BY id')).rows;
+    return list.map((inst) => {
       const snap = store.getSnapshot(inst.id);
       return {
         ...inst,
