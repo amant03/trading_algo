@@ -1,13 +1,24 @@
 // Yahoo-backed Indian equity search (NSE + BSE). Complements the local
 // universe.json so names that aren't in the snapshot still resolve.
 
-import { jsonHeaders, stripYahooTicker } from './nse';
-
 interface Hit {
   symbol: string;
   name: string;
   exchange: string;
   type: string;
+}
+
+function jsonHeaders(): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-store, max-age=0',
+    'Access-Control-Allow-Origin': '*',
+  };
+}
+
+function stripYahooTicker(raw: string): string {
+  if (raw === '^NSEI') return 'NIFTY50';
+  return raw.replace(/\.(NS|BO)$/i, '').toUpperCase();
 }
 
 export async function GET(request: Request): Promise<Response> {
