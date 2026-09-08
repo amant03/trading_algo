@@ -16,6 +16,19 @@ const META: Record<string, { desc: string; accent: string }> = {
   donchian_breakout: { desc: 'Donchian channel breakout — classic trend-following entries on N-bar high/low breaks.', accent: '#ffd166' },
 };
 
+/** Mirrors the engine's DEFAULT_CONFIGS so the page still renders when the
+ *  static deploy has no live backend to answer /api/algorithms. */
+const FALLBACK_CONFIGS: AlgorithmConfig[] = [
+  { strategy: 'ma_cross', enabled: true, params: { fast: 20, slow: 50 } },
+  { strategy: 'rsi_reversal', enabled: true, params: { period: 14, oversold: 30, overbought: 70 } },
+  { strategy: 'macd_cross', enabled: true, params: { fast: 12, slow: 26, signal: 9 } },
+  { strategy: 'bb_breakout', enabled: true, params: { period: 20, mult: 2 } },
+  { strategy: 'supertrend', enabled: true, params: { period: 10, mult: 3 } },
+  { strategy: 'stoch_cross', enabled: true, params: { kPeriod: 14, dPeriod: 3, oversold: 20, overbought: 80 } },
+  { strategy: 'vwap_reversion', enabled: true, params: { lookback: 60, bufferPct: 0.05 } },
+  { strategy: 'donchian_breakout', enabled: true, params: { period: 20 } },
+];
+
 export default function Algorithms() {
   const toast = useToast();
   const signals = useLive((s) => s.signals);
@@ -26,7 +39,7 @@ export default function Algorithms() {
   }, []);
 
   const refresh = () => {
-    get<AlgorithmConfig[]>('/api/algorithms').then(setConfigs).catch(() => {});
+    get<AlgorithmConfig[]>('/api/algorithms').then(setConfigs).catch(() => setConfigs(FALLBACK_CONFIGS));
   };
 
   const toggle = async (c: AlgorithmConfig, enabled: boolean) => {
@@ -45,7 +58,7 @@ export default function Algorithms() {
     <div>
       <h1 style={{ marginBottom: 4 }}>Algorithm Engine</h1>
       <p className="muted" style={{ marginBottom: 20, fontSize: 13 }}>
-        Five strategies run on the 1-minute bar stream. Signals are published to Kafka and executed by the paper-trading executor.
+        Eight strategies run on the 1-minute bar stream. Signals are published to Kafka and executed by the paper-trading executor.
       </p>
 
       <div className="grid-2">
@@ -79,7 +92,7 @@ export default function Algorithms() {
                   ))}
                 </div>
               )}
-              <div className="dim" style={{ marginTop: 10, fontSize: 10.5 }}>signal #{i + 1} · engine refresh 30s</div>
+              <div className="dim" style={{ marginTop: 10, fontSize: 10.5 }}>realtime · stream-driven</div>
             </div>
           );
         })}

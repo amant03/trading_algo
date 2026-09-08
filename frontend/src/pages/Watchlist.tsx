@@ -20,8 +20,30 @@ export default function Watchlist() {
   const [allInstruments, setAllInstruments] = useState<Instrument[]>([]);
 
   const refresh = useCallback(() => {
-    get<WatchItem[]>('/api/watchlist').then(setItems).catch(() => {});
-  }, []);
+    get<WatchItem[]>('/api/watchlist')
+      .then(setItems)
+      .catch(() => {
+        // Static deploy / no backend: seed a sensible watchlist from the
+        // snapshot feed so the page is never an empty shell.
+        const snaps = Object.values(snapshots).sort((a, b) => b.changePct - a.changePct);
+        setItems((prev) =>
+          prev.length
+            ? prev
+            : snaps.slice(0, 10).map((s) => ({
+                id: s.instrumentId,
+                symbol: s.symbol,
+                name: s.symbol,
+                sector: '',
+                isin: '',
+                exchange: 'NSE',
+                marketCap: 0,
+                basePrice: s.price,
+                price: s.price,
+                changePct: s.changePct,
+              })),
+        );
+      });
+  }, [snapshots]);
 
   useEffect(() => {
     refresh();
