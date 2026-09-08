@@ -1,51 +1,51 @@
 {
-  "timestamp": "2026-09-08T19:32:14.839Z",
+  "timestamp": "2026-09-08T18:01:15.483Z",
   "instruments": 52,
-  "candles": 58249,
-  "signals": 309,
-  "orders": 75,
-  "trades": 75,
-  "openPositions": 13,
+  "candles": 58144,
+  "signals": 332,
+  "orders": 64,
+  "trades": 64,
+  "openPositions": 12,
   "news": 25,
   "account": {
-    "cash_balance": "645560.37",
-    "equity": "1041496.32"
+    "cash_balance": "688428.30",
+    "equity": "1062335.25"
   },
   "latestSignals": [
     {
-      "symbol": "ADANIENT",
+      "symbol": "SBIN",
       "direction": "SELL",
-      "strategy": "donchian_breakout",
-      "reason": "Donchian breakdown: close below 20-bar low 2945.90",
-      "ts": "2026-09-08T19:32:14.575Z"
+      "strategy": "bb_breakout",
+      "reason": "Close broke below lower Bollinger band (2x std dev)",
+      "ts": "2026-09-08T18:01:14.003Z"
     },
     {
-      "symbol": "MARUTI",
+      "symbol": "ULTRACEMCO",
       "direction": "SELL",
-      "strategy": "donchian_breakout",
-      "reason": "Donchian breakdown: close below 20-bar low 12856.85",
-      "ts": "2026-09-08T19:32:14.575Z"
-    },
-    {
-      "symbol": "AXISBANK",
-      "direction": "SELL",
-      "strategy": "ma_cross",
-      "reason": "Death cross: SMA20 crossed below SMA50",
-      "ts": "2026-09-08T19:32:14.575Z"
-    },
-    {
-      "symbol": "AXISBANK",
-      "direction": "SELL",
-      "strategy": "donchian_breakout",
-      "reason": "Donchian breakdown: close below 20-bar low 1273.80",
-      "ts": "2026-09-08T19:32:14.575Z"
+      "strategy": "bb_breakout",
+      "reason": "Close broke below lower Bollinger band (2x std dev)",
+      "ts": "2026-09-08T18:01:14.003Z"
     },
     {
       "symbol": "TATAMOTORS",
       "direction": "SELL",
-      "strategy": "bb_breakout",
-      "reason": "Close broke below lower Bollinger band (2x std dev)",
-      "ts": "2026-09-08T19:32:14.575Z"
+      "strategy": "donchian_breakout",
+      "reason": "Donchian breakdown: close below 20-bar low 975.65",
+      "ts": "2026-09-08T18:01:14.003Z"
+    },
+    {
+      "symbol": "ONGC",
+      "direction": "BUY",
+      "strategy": "rsi_reversal",
+      "reason": "RSI(14) 33.4 rebounded out of oversold",
+      "ts": "2026-09-08T18:01:11.003Z"
+    },
+    {
+      "symbol": "RELIANCE",
+      "direction": "BUY",
+      "strategy": "donchian_breakout",
+      "reason": "Donchian breakout: close above 20-bar high 1297.75",
+      "ts": "2026-09-08T18:01:11.003Z"
     }
   ]
 }
