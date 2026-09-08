@@ -36,7 +36,7 @@ jobs:
       - name: Install deps + Vercel CLI
         run: |
           npm ci --no-audit --no-fund
-          npm i -g vercel@45 --no-audit --no-fund
+          npm i -g vercel@latest --no-audit --no-fund
 
       - name: Deploy to Vercel (production)
         run: vercel deploy --prod --yes --token "${{ secrets.VERCEL_TOKEN }}"
