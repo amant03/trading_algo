@@ -1,0 +1,51 @@
+{
+  "timestamp": "2026-09-08T14:39:41.200Z",
+  "instruments": 52,
+  "candles": 58248,
+  "signals": 290,
+  "orders": 66,
+  "trades": 66,
+  "openPositions": 14,
+  "news": 25,
+  "account": {
+    "cash_balance": "591623.64",
+    "equity": "591623.64"
+  },
+  "latestSignals": [
+    {
+      "symbol": "HDFCBANK",
+      "direction": "BUY",
+      "strategy": "donchian_breakout",
+      "reason": "Donchian breakout: close above 20-bar high 706.20",
+      "ts": "2026-09-08T14:39:39.761Z"
+    },
+    {
+      "symbol": "ITC",
+      "direction": "SELL",
+      "strategy": "ma_cross",
+      "reason": "Death cross: SMA20 crossed below SMA50",
+      "ts": "2026-09-08T14:39:39.761Z"
+    },
+    {
+      "symbol": "BAJFINANCE",
+      "direction": "SELL",
+      "strategy": "ma_cross",
+      "reason": "Death cross: SMA20 crossed below SMA50",
+      "ts": "2026-09-08T14:39:39.761Z"
+    },
+    {
+      "symbol": "BAJFINANCE",
+      "direction": "SELL",
+      "strategy": "bb_breakout",
+      "reason": "Close broke below lower Bollinger band (2x std dev)",
+      "ts": "2026-09-08T14:39:39.761Z"
+    },
+    {
+      "symbol": "BAJFINANCE",
+      "direction": "SELL",
+      "strategy": "donchian_breakout",
+      "reason": "Donchian breakdown: close below 20-bar low 1049.75",
+      "ts": "2026-09-08T14:39:39.761Z"
+    }
+  ]
+}
