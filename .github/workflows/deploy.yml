@@ -1,0 +1,50 @@
+name: Deploy Frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - 'vercel.json'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: vercel-deploy
+  cancel-in-progress: false
+
+env:
+  VERCEL_ORG_ID: team_oOhpBKL5kXIqTy5qsX1TR1k1
+  VERCEL_PROJECT_ID: prj_ADQhdcMbS0rOdLTsznQcbW6Ht7dd
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install deps + Vercel CLI
+        run: |
+          npm ci --no-audit --no-fund
+          npm i -g vercel@45 --no-audit --no-fund
+
+      - name: Deploy to Vercel (production)
+        run: vercel deploy --prod --yes --token "${{ secrets.VERCEL_TOKEN }}"
+        env:
+          VERCEL_ORG_ID: ${{ env.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ env.VERCEL_PROJECT_ID }}
+
+      - name: Extract deployment URL to summary
+        if: always()
+        run: |
+          echo "Deployment triggered for commit \`${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
