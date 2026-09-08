@@ -42,7 +42,7 @@ export default function AdvChart({
   rows: HistoryRow[];
   livePrice?: number | null;
   range: RangeId;
-  onRangeChange: (r: RangeId) => void;
+  onRangeChange?: (r: RangeId) => void;
 }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [w, setW] = useState(760);
@@ -119,11 +119,17 @@ export default function AdvChart({
           </div>
         </div>
         <div className="range-tabs">
-          {RANGES.map((r) => (
-            <button key={r.id} className={range === r.id ? 'active' : ''} onClick={() => onRangeChange(r.id)}>
-              {r.label}
-            </button>
-          ))}
+          {onRangeChange
+            ? RANGES.map((r) => (
+                <button key={r.id} className={range === r.id ? 'active' : ''} onClick={() => onRangeChange(r.id)}>
+                  {r.label}
+                </button>
+              ))
+            : (
+              <span className="dim" style={{ fontSize: 11, fontFamily: "'IBM Plex Mono', monospace" }}>
+                {RANGES.find((r) => r.id === range)?.label} · NSE OHLC
+              </span>
+            )}
         </div>
       </div>
 

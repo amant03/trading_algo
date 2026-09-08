@@ -7,6 +7,9 @@ import { useToast } from '../components/Toasts';
 import { DirectionBadge, GradeBadge } from '../components/Badge';
 import AdvChart, { type AdvRangeId } from '../components/charts/AdvChart';
 import NewsFeed from '../components/NewsFeed';
+import CompetitionPanel from '../components/CompetitionPanel';
+import ReportsPanel from '../components/ReportsPanel';
+import AIAnalyst from '../components/AIAnalyst';
 import {
   sma,
   ema,
@@ -34,7 +37,7 @@ import type {
   LegalCase,
 } from '../types';
 
-type Tab = 'overview' | 'fundamentals' | 'technical' | 'news';
+type Tab = 'overview' | 'fundamentals' | 'technical' | 'news' | 'ai';
 
 const RATING_COLOR: Record<string, string> = {
   'Strong Buy': 'var(--up)',
@@ -46,8 +49,9 @@ const RATING_COLOR: Record<string, string> = {
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'overview', label: 'Overview', icon: '◈' },
-  { id: 'technical', label: 'Technical', icon: '〄' },
   { id: 'fundamentals', label: 'Fundamentals', icon: '◉' },
+  { id: 'technical', label: 'Technical', icon: '〄' },
+  { id: 'ai', label: 'AI Analyst', icon: '✦' },
   { id: 'news', label: 'News', icon: '✉' },
 ];
 
@@ -421,6 +425,9 @@ export default function Stock() {
   const [signals, setSignals] = useState<Signal[]>([]);
   const [stockNews, setStockNews] = useState<NewsItem[]>([]);
   const [stockNewsArt, setStockNewsArt] = useState<NewsArticle[]>([]);
+  const [dayRows, setDayRows] = useState<HistoryRow[]>([]);
+  const [dayLoading, setDayLoading] = useState(true);
+  const [aiPrompt, setAiPrompt] = useState<string | null>(null);
 
   const snap: Snapshot | undefined = snapshots[upper];
   const analysis: StockAnalysis | undefined = fundamentals[upper];
@@ -460,6 +467,24 @@ export default function Stock() {
     const art = newsBySymbol[upper];
     if (art?.length) setStockNewsArt(art);
   }, [newsBySymbol, upper]);
+
+  useEffect(() => {
+    let live = true;
+    setDayLoading(true);
+    get<{ rows: HistoryRow[] }>(`/api/chart?symbol=${encodeURIComponent(upper)}&range=1d`)
+      .then((r) => {
+        if (live) setDayRows(Array.isArray(r.rows) ? r.rows : []);
+      })
+      .catch(() => {
+        if (live) setDayRows([]);
+      })
+      .finally(() => {
+        if (live) setDayLoading(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [upper]);
 
   const changePct = snap?.changePct;
 
@@ -521,9 +546,24 @@ export default function Stock() {
             <div className="chart-box reveal">
               <div className="panel-title">
                 <h3>Price history</h3>
-                <span className="hint">last {Math.max(spark.length, 1)} daily closes</span>
+                <span className="hint">
+                  {dayRows.length > 1
+                    ? '1D intraday · real NSE OHLC'
+                    : dayLoading
+                      ? 'loading today…'
+                      : `last ${Math.max(spark.length, 1)} daily closes`}
+                </span>
               </div>
-              {spark.length > 1 ? (
+              {dayRows.length > 1 ? (
+                <AdvChart symbol={upper} rows={dayRows} livePrice={livePrice} range="1d" />
+              ) : dayLoading ? (
+                <div className="empty" style={{ minHeight: 330, display: 'grid', placeItems: 'center' }}>
+                  <div>
+                    <div style={{ fontSize: 22, marginBottom: 8 }}>▤</div>
+                    Loading today's candles…
+                  </div>
+                </div>
+              ) : spark.length > 1 ? (
                 <SparklineChart points={spark} height={330} />
               ) : (
                 <div className="empty" style={{ minHeight: 330, display: 'grid', placeItems: 'center' }}>
@@ -598,6 +638,9 @@ export default function Stock() {
               )}
             </div>
           </div>
+
+          <CompetitionPanel symbol={upper} peers={analysis?.peers ?? []} onContext={setAiPrompt} />
+          <ReportsPanel reports={analysis?.reports ?? null} />
         </div>
       )}
 

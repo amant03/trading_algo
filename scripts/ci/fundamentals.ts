@@ -53,7 +53,7 @@ async function makeYahoo(): Promise<YahooClient> {
       try {
         const url =
           `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}` +
-          `?modules=summaryDetail,defaultKeyStatistics,financialData,summaryProfile&crumb=${encodeURIComponent(crumb)}&formatted=false`;
+          `?modules=summaryDetail,defaultKeyStatistics,financialData,summaryProfile,earnings,esgScores&crumb=${encodeURIComponent(crumb)}&formatted=false`;
         const res = await fetch(url, {
           headers: { 'User-Agent': UA, Cookie: jar },
           signal: AbortSignal.timeout(12_000),
@@ -86,6 +86,99 @@ function gradeFor(score: number): string {
   if (score >= 40) return 'B-';
   if (score >= 32) return 'C+';
   return 'C';
+}
+
+// ---- long-term opinion, competition and report links --------------------
+
+type Opinion = {
+  horizon: 'lt';
+  stance: 'BUY' | 'HOLD' | 'SELL';
+  conviction: number;
+  thesis: string;
+  risks: string[];
+};
+
+function slugifyCompany(name: string): string {
+  return (name ?? '')
+    .toLowerCase()
+    .replace(/&/g, 'and')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+function buildOpinion(
+  m: Metrics,
+  verdict: { score: number; marginOfSafety: number; rating: string; fairValueMid: number },
+  screens: Record<string, Screen>,
+  price: number,
+): Opinion {
+  const { score, marginOfSafety: mos, fairValueMid, rating } = verdict;
+  const strong = score >= 72;
+  const good = score >= 56;
+  const bad = score < 44;
+
+  let stance: Opinion['stance'] = 'HOLD';
+  if (strong && mos >= -5) stance = 'BUY';
+  else if (good && mos >= 8) stance = 'BUY';
+  else if (mos >= 20) stance = 'BUY';
+  else if (bad && mos <= -8) stance = 'SELL';
+  else if (mos <= -25) stance = 'SELL';
+
+  const conviction = Math.round(Math.max(5, Math.min(95, score * 0.6 + ((mos + 30) / 60) * 40)));
+
+  const bits: string[] = [];
+  bits.push(`Long-term stance: ${stance} (${conviction}% conviction, horizon 3-5 yrs).`);
+  bits.push(`Blended valuation score ${score}/100 ("${rating}") with fair value ≈ ₹${Math.round(fairValueMid).toLocaleString('en-IN')} vs price ₹${Math.round(price).toLocaleString('en-IN')} — ${mos >= 0 ? '+' : ''}${mos}% margin of safety.`);
+  const drv: string[] = [];
+  if (m.roe != null) drv.push(`ROE ${m.roe.toFixed(1)}%`);
+  if (m.netMargin != null) drv.push(`net margin ${m.netMargin.toFixed(1)}%`);
+  if (m.debtToEquity != null) drv.push(`D/E ${m.debtToEquity.toFixed(2)}`);
+  if (m.earningsGrowth != null) drv.push(`earnings growth ${m.earningsGrowth.toFixed(1)}%`);
+  if (m.revenueGrowth != null) drv.push(`revenue growth ${m.revenueGrowth.toFixed(1)}%`);
+  if (m.dividendYield != null) drv.push(`yield ${m.dividendYield.toFixed(2)}%`);
+  if (drv.length) bits.push(`Key inputs: ${drv.join(', ')}.`);
+  bits.push(`Screens — Buffett ${screens.buffett.grade} · Lynch ${screens.lynch.grade} · Graham ${screens.graham.grade}.`);
+
+  const risks: string[] = [];
+  if (m.debtToEquity != null && m.debtToEquity > 1.5) risks.push(`Elevated leverage (D/E ${m.debtToEquity.toFixed(2)})`);
+  if (m.netMargin != null && m.netMargin < 5) risks.push(`Thin net margin (${m.netMargin.toFixed(1)}%)`);
+  if (m.roe != null && m.roe < 10) risks.push(`Low return on equity (${m.roe.toFixed(1)}%)`);
+  if ((m.revenueGrowth ?? 0) < 0) risks.push('Revenue contracting');
+  if ((m.earningsGrowth ?? 0) < 0) risks.push('Earnings declining');
+  if (m.promoterHolding != null && m.promoterHolding < 40) risks.push(`Promoter holding only ${m.promoterHolding.toFixed(0)}%`);
+  if (m.beta != null && m.beta > 1.5) risks.push(`High beta ${m.beta.toFixed(2)}`);
+  if (m.peg != null && m.peg > 2.5) risks.push(`Expensive growth (PEG ${m.peg.toFixed(2)})`);
+  if (!risks.length) risks.push('No material red flags in the current fundamentals.');
+
+  return { horizon: 'lt', stance, conviction, thesis: bits.join(' '), risks };
+}
+
+function reportLinks(name: string, quarterEnd: string | null): unknown {
+  const slug = slugifyCompany(name) || 'company';
+  const qSearch = `https://www.google.com/search?q=${encodeURIComponent(`${name} quarterly results`)}`;
+  const aSearch = `https://www.google.com/search?q=${encodeURIComponent(`${name} annual report pdf`)}`;
+  const screenerRoot = `https://www.screener.in/company/${slug}/`;
+  return {
+    quarterly: {
+      label: 'Latest quarterly',
+      period: quarterEnd
+        ? new Date(`${quarterEnd}-01T00:00:00Z`).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })
+        : null,
+      links: [
+        { label: 'Screener — quarterly financials', url: `${screenerRoot}consolidated/#quarters`, kind: 'financials' },
+        { label: 'Search latest quarter results', url: qSearch, kind: 'search' },
+      ],
+    },
+    annual: {
+      label: 'Latest annual',
+      period: null,
+      links: [
+        { label: 'Screener — annual financials', url: `${screenerRoot}consolidated/`, kind: 'financials' },
+        { label: 'Search annual report PDF', url: aSearch, kind: 'search' },
+      ],
+    },
+  };
 }
 
 function buffettScreen(m: Metrics): Screen {
@@ -373,6 +466,8 @@ async function main(): Promise<void> {
   }
 
   const yahoo = await makeYahoo();
+  const yahooPeersPer: Record<string, string[]> = {};
+  const quarterEndPer: Record<string, string | null> = {};
   const stocks: Record<string, unknown> = {};
   let yahooTouched = 0;
 
@@ -420,15 +515,29 @@ async function main(): Promise<void> {
     m.growth = m.earningsGrowth ?? m.revenueGrowth;
 
     let yahooData: Record<string, any> | null = null;
+    let yahooPeers: string[] = [];
+    let quarterEnd: string | null = null;
     if (yahoo.ok) {
       try {
         yahooData = await yahoo.quoteSummary(`${r.symbol}.NS`);
         const { updated } = applyYahoo(m, yahooData);
         if (updated.length) yahooTouched += 1;
+        const res =
+          (yahooData?.quoteSummary?.result as Record<string, any>[] | undefined)?.[0] ??
+          (yahooData?.quoteSummary?.result as any);
+        const list = res?.esgScores?.peers;
+        if (Array.isArray(list)) yahooPeers = list.filter((p): p is string => typeof p === 'string');
+        const quarterly = res?.earnings?.earningsChart?.quarterly;
+        if (Array.isArray(quarterly) && quarterly.length) {
+          const d = quarterly[quarterly.length - 1]?.date;
+          if (typeof d === 'string') quarterEnd = d;
+        }
       } catch {
         yahooData = null;
       }
     }
+    yahooPeersPer[r.symbol] = yahooPeers;
+    quarterEndPer[r.symbol] = quarterEnd;
 
     m.growth = m.earningsGrowth ?? m.revenueGrowth;
     const buffett = buffettScreen(m);
@@ -513,6 +622,12 @@ async function main(): Promise<void> {
           `(${moS >= 0 ? '+' : ''}${moS}% margin of safety). ` +
           `Buffett ${buffett.grade} · Lynch ${lynch.grade} · Graham ${graham.grade}.`,
       },
+      opinion: buildOpinion(
+        m,
+        { score, marginOfSafety: moS, rating, fairValueMid: fairMid },
+        { buffett, lynch, graham },
+        price,
+      ),
     };
   }
 
@@ -520,6 +635,51 @@ async function main(): Promise<void> {
   for (const s of SEED) {
     const entry = stocks[s.symbol] as { name?: string; sector?: string | null } | undefined;
     if (entry) entry.name = s.name;
+  }
+
+  // ---- competition (peers) + disclosure reports -------------------------
+  const allSyms = new Set(Object.keys(stocks));
+  const byIndustry = new Map<string, string[]>();
+  const bySector = new Map<string, string[]>();
+  const seedName = new Map(SEED.map((s) => [s.symbol, s.name]));
+  const seedIndustry = new Map(SEED.map((s) => [s.symbol, s.industry ?? null]));
+  const seedSector = new Map(SEED.map((s) => [s.symbol, s.sector]));
+  for (const sym of allSyms) {
+    const e = stocks[sym] as { industry?: string | null; sector?: string | null };
+    const ind = e.industry ?? seedIndustry.get(sym);
+    const sec = e.sector ?? seedSector.get(sym);
+    if (ind) (byIndustry.get(ind) ?? byIndustry.set(ind, []).get(ind)!).push(sym);
+    if (sec) (bySector.get(sec) ?? bySector.set(sec, []).get(sec)!).push(sym);
+  }
+
+  for (const sym of allSyms) {
+    const e = stocks[sym] as {
+      industry?: string | null;
+      sector?: string | null;
+      name?: string;
+      peers?: unknown;
+      reports?: unknown;
+    };
+    const peers = new Set<string>();
+    for (const p of yahooPeersPer[sym] ?? []) {
+      const clean = p.replace(/\.(NS|NSE|BO)$/i, '').toUpperCase();
+      if (allSyms.has(clean)) peers.add(clean);
+    }
+    const ind = e.industry ?? seedIndustry.get(sym);
+    const sec = e.sector ?? seedSector.get(sym);
+    for (const ext of [ind ? byIndustry.get(ind) : [], sec ? bySector.get(sec) : []]) {
+      for (const s of ext ?? []) if (s !== sym) peers.add(s);
+    }
+    e.peers = [...peers]
+      .sort((a, b) => a.localeCompare(b))
+      .slice(0, 9)
+      .map((s) => ({
+        symbol: s,
+        name: seedName.get(s) ?? s,
+        industry: seedIndustry.get(s) ?? null,
+        sector: seedSector.get(s) ?? null,
+      }));
+    e.reports = reportLinks(seedName.get(sym) ?? e.name ?? sym, quarterEndPer[sym] ?? null);
   }
 
   const out = {

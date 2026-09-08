@@ -247,6 +247,38 @@ export interface StockAnalysisMetrics {
   fiiHolding: number | null;
 }
 
+export interface StockOpinion {
+  horizon: 'lt';
+  stance: 'BUY' | 'HOLD' | 'SELL';
+  conviction: number;
+  thesis: string;
+  risks: string[];
+}
+
+export interface PeerInfo {
+  symbol: string;
+  name: string | null;
+  industry: string | null;
+  sector: string | null;
+}
+
+export interface ReportLink {
+  label: string;
+  url: string;
+  kind: 'financials' | 'search';
+}
+
+export interface ReportGroup {
+  label: string;
+  period: string | null;
+  links: ReportLink[];
+}
+
+export interface StockReports {
+  quarterly: ReportGroup;
+  annual: ReportGroup;
+}
+
 export interface StockAnalysis {
   symbol: string;
   name: string | null;
@@ -258,6 +290,9 @@ export interface StockAnalysis {
   metrics: StockAnalysisMetrics;
   screens: { buffett: ScreenResult; lynch: ScreenResult; graham: ScreenResult };
   management: MgmtAnalysis | null;
+  peers: PeerInfo[];
+  reports: StockReports | null;
+  opinion: StockOpinion | null;
   verdict: {
     score: number;
     grade: string;
