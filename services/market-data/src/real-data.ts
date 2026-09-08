@@ -109,32 +109,42 @@ export async function syncRealHistory(instruments: Instrument[]): Promise<number
   return bars;
 }
 
-interface YahooQuote {
-  symbol?: string;
+interface ChartMeta {
   regularMarketPrice?: number | null;
-  regularMarketPreviousClose?: number | null;
-  regularMarketVolume?: number | null;
+  regularMarketTime?: number | null;
+  chartPreviousClose?: number | null;
+  previousClose?: number | null;
   regularMarketDayHigh?: number | null;
   regularMarketDayLow?: number | null;
-  regularMarketTime?: number | null;
+  regularMarketVolume?: number | null;
 }
 
-/** Publish one fresh real quote per instrument. Returns snapshot count. */
+/**
+ * Publish one fresh real quote per instrument. The free v7/finance/quote
+ * endpoint now returns 401 to scripted clients, so we source quotes from the
+ * same v8 chart endpoint that history uses (range=1d): the latest bar's
+ * close + meta fields give price/prev/day OHLCV. Symbols with no coverage
+ * (e.g. renames/delistings) are skipped, not fatal. Requests are pooled (8
+ * at a time) to stay polite to the free endpoint.
+ */
 export async function refreshRealQuotes(instruments: Instrument[]): Promise<number> {
-  const byYahoo = new Map(instruments.map((i) => [yahooSymbol(i.symbol), i]));
   const snaps: Snapshot[] = [];
-  const names = [...byYahoo.keys()];
-  for (let i = 0; i < names.length; i += 25) {
-    const chunk = names.slice(i, i + 25);
-    const data = (await yahooJson(
-      `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${chunk.map(encodeURIComponent).join(',')}` +
-        `&fields=symbol,regularMarketPrice,regularMarketPreviousClose,regularMarketVolume,regularMarketDayHigh,regularMarketDayLow,regularMarketTime`,
-    )) as { quoteResponse?: { result?: YahooQuote[] } } | null;
-    for (const q of data?.quoteResponse?.result ?? []) {
-      const inst = q.symbol ? byYahoo.get(q.symbol) : undefined;
-      if (!inst || q.regularMarketPrice == null) continue;
-      const price = q.regularMarketPrice;
-      const prev = q.regularMarketPreviousClose ?? price;
+  let cursor = 0;
+  const workerCount = 8;
+  const workers = Array.from({ length: workerCount }, async () => {
+    for (;;) {
+      const idx = cursor++;
+      const inst = instruments[idx];
+      if (!inst) return;
+      const data = (await yahooJson(
+        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol(inst.symbol))}?range=1d&interval=1d`,
+      )) as { chart?: { result?: [{ meta?: ChartMeta; indicators?: { quote?: { close?: (number | null)[] }[] } }] } } | null;
+      const r = data?.chart?.result?.[0];
+      const meta = r?.meta;
+      const lastClose = r?.indicators?.quote?.[0]?.close?.filter((c): c is number => c != null).pop();
+      const price = meta?.regularMarketPrice ?? lastClose;
+      if (price == null) continue;
+      const prev = meta?.chartPreviousClose ?? meta?.previousClose ?? price;
       snaps.push({
         instrumentId: inst.id,
         symbol: inst.symbol,
@@ -143,14 +153,14 @@ export async function refreshRealQuotes(instruments: Instrument[]): Promise<numb
         change: round4(price - prev),
         changePct: prev ? round4(((price - prev) / prev) * 100) : 0,
         dayOpen: round4(prev),
-        dayHigh: round4(q.regularMarketDayHigh ?? price),
-        dayLow: round4(q.regularMarketDayLow ?? price),
-        dayVolume: Math.round(q.regularMarketVolume ?? 0),
-        ts: q.regularMarketTime ? q.regularMarketTime * 1000 : Date.now(),
+        dayHigh: round4(meta?.regularMarketDayHigh ?? price),
+        dayLow: round4(meta?.regularMarketDayLow ?? price),
+        dayVolume: Math.round(meta?.regularMarketVolume ?? 0),
+        ts: meta?.regularMarketTime ? meta.regularMarketTime * 1000 : Date.now(),
       });
     }
-    await sleep(200);
-  }
+  });
+  await Promise.all(workers);
   if (snaps.length) {
     await publishBatch(
       TOPICS.snapshots,
