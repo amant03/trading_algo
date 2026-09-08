@@ -1,7 +1,7 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { get } from '../api';
-import { useLive, refreshSymbols } from '../ws';
+import { useLive, refreshSymbols, fetchRelayNews } from '../ws';
 import { fmt, fmtPct, fmtCompact, fmtMoney, cls } from '../format';
 import { useToast } from '../components/Toasts';
 import { DirectionBadge, GradeBadge } from '../components/Badge';
@@ -434,6 +434,9 @@ export default function Stock() {
     setOvRange('1d');
     setDayRows([]);
     void refreshSymbols([upper]);
+    void fetchRelayNews(upper).then((arts) => {
+      if (arts.length) setStockNewsArt(arts);
+    });
 
     get<Signal[]>(`/api/instruments/${upper}/signals?limit=30`)
       .then(setSignals)
@@ -766,7 +769,7 @@ export default function Stock() {
           <div className="panel">
             <div className="panel-title">
               <h3>News — {upper}</h3>
-              <span className="hint">hourly Google News scan · 7-day history</span>
+              <span className="hint">Google News · live</span>
             </div>
             {stockNewsArt.length ? (
               <div className="stock-news-list">
@@ -785,7 +788,7 @@ export default function Stock() {
                 <NewsFeed items={stockNews} limit={12} />
               </div>
             ) : (
-              <div className="empty">No news for {upper} yet — the hourly scanner will populate this within the hour.</div>
+              <div className="empty">No recent headlines for {upper} from Google News.</div>
             )}
           </div>
 

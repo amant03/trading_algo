@@ -224,11 +224,10 @@ function toInstruments(list: QuoteLike[]): Instrument[] {
 
 async function pollOnce(): Promise<boolean> {
   try {
-    const [quotes, overview, sigs, news] = await Promise.all([
+    const [quotes, overview, sigs] = await Promise.all([
       get<QuoteLike[]>('/api/instruments'),
       get<MarketOverview>('/api/market/overview').catch(() => null),
       get<Signal[]>('/api/signals?limit=60').catch(() => null),
-      get<NewsItem[]>('/api/news?limit=60').catch(() => null),
     ]);
     const live = useLive.getState();
     if (quotes.length) {
@@ -238,7 +237,6 @@ async function pollOnce(): Promise<boolean> {
     if (overview) live.setOverview(overview);
     if (sigs && !live.signals.length) live.replaceSignals(sigs);
     else if (sigs && sigs.length > live.signals.length) live.replaceSignals(sigs);
-    if (news && !live.news.length) live.replaceNews(news);
     useLive.getState().setMode('polling');
     return true;
   } catch {
@@ -479,9 +477,71 @@ async function loadJson<T>(urls: string[]): Promise<T | null> {
 
 async function loadNews(): Promise<boolean> {
   const data = await loadJson<{ generatedAt?: string; items?: Record<string, NewsArticle[]> }>(NEWS_URLS);
-  if (!data?.items) return false;
-  useLive.getState().setNewsBySymbol(data.items);
-  return true;
+  if (data?.items) {
+    const live = useLive.getState();
+    live.setNewsBySymbol(data.items);
+    const flat: NewsArticle[] = [];
+    for (const [sym, rows] of Object.entries(data.items)) {
+      for (const a of rows) flat.push({ ...a, symbol: a.symbol || sym });
+    }
+    applyNewsFeed(articlesToFeed(flat));
+  }
+  void fetchRelayNews();
+  return Boolean(data?.items);
+}
+
+function articlesToFeed(articles: NewsArticle[]): NewsItem[] {
+  return articles
+    .filter((a) => a.title && a.url)
+    .map((a, i) => ({
+      id: i + 1,
+      instrumentId: null,
+      symbol: a.symbol || null,
+      headline: a.title,
+      summary: null,
+      source: a.source || 'Google News',
+      category: 'NEWS',
+      sentiment: 'NEUTRAL',
+      impact: 'LOW',
+      tags: [],
+      publishedAt: Date.parse(a.publishedAt) || Date.now(),
+      url: a.url,
+    }));
+}
+
+function applyNewsFeed(items: NewsItem[]): void {
+  if (!items.length) return;
+  const live = useLive.getState();
+  const byHead = new Map<string, NewsItem>();
+  for (const n of [...items, ...live.news.filter((n) => n.url)]) {
+    if (!byHead.has(n.headline)) byHead.set(n.headline, n);
+  }
+  live.replaceNews([...byHead.values()].sort((a, b) => b.publishedAt - a.publishedAt).slice(0, 48));
+}
+
+export async function fetchRelayNews(symbol?: string): Promise<NewsArticle[]> {
+  try {
+    const path = symbol
+      ? `/api/news?symbol=${encodeURIComponent(symbol)}`
+      : '/api/news';
+    const res = await fetch(path, { cache: 'no-store' });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { hits?: Array<{ title?: string; source?: string; url?: string; publishedAt?: string; symbol?: string | null }> };
+    const hits: NewsArticle[] = (data.hits ?? [])
+      .filter((h) => h.title && h.url)
+      .map((h) => ({
+        title: String(h.title),
+        source: String(h.source || 'Google News'),
+        url: String(h.url),
+        publishedAt: h.publishedAt || new Date().toISOString(),
+        symbol: h.symbol || symbol || '',
+      }));
+    if (symbol && hits.length) useLive.getState().setNewsBySymbol({ [symbol]: hits });
+    applyNewsFeed(articlesToFeed(hits));
+    return hits;
+  } catch {
+    return [];
+  }
 }
 
 async function loadAnalysis(): Promise<boolean> {
@@ -512,7 +572,6 @@ async function loadCiSnapshot(): Promise<boolean> {
   }
   if (data.overview) live.setOverview(data.overview);
   if (data.signals?.length) live.replaceSignals(data.signals);
-  if (data.news?.length) live.replaceNews(data.news);
   if (data.generatedAt) live.setSnapshotAt(new Date(data.generatedAt).getTime());
   if (live.mode === 'offline') live.setMode('snapshot');
   void loadAnalysis();

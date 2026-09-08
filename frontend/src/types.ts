@@ -148,6 +148,7 @@ export interface NewsItem {
   impact: string;
   tags: string[];
   publishedAt: number;
+  url?: string | null;
 }
 
 export interface AlgorithmConfig {

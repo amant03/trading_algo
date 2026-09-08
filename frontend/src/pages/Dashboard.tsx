@@ -239,10 +239,10 @@ export default function Dashboard() {
         <div className="panel reveal reveal-2">
           <div className="panel-title">
             <h3>Live News</h3>
-            <span className="hint">streaming · market.news</span>
+            <span className="hint">Google News · India</span>
           </div>
-          <div style={{ maxHeight: 300, overflowY: 'auto' }}>
-            <NewsFeed items={news} limit={8} />
+          <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+            <NewsFeed items={news} limit={12} />
           </div>
         </div>
       </div>

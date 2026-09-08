@@ -4,12 +4,13 @@ import react from '@vitejs/plugin-react';
 import { GET as liveGet } from './api/live';
 import { GET as chartGet } from './api/chart';
 import { GET as searchGet } from './api/search';
+import { GET as newsGet } from './api/news';
 
 function nseRelay(): Plugin {
   const handle = async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
     const url = req.url ?? '';
     const path = url.split('?')[0];
-    if (path !== '/api/live' && path !== '/api/chart' && path !== '/api/search') {
+    if (path !== '/api/live' && path !== '/api/chart' && path !== '/api/search' && path !== '/api/news') {
       next();
       return;
     }
@@ -19,6 +20,7 @@ function nseRelay(): Plugin {
       const out =
         path === '/api/chart' ? await chartGet(request)
         : path === '/api/search' ? await searchGet(request)
+        : path === '/api/news' ? await newsGet(request)
         : await liveGet(request);
       res.statusCode = out.status;
       out.headers.forEach((v, k) => res.setHeader(k, v));
@@ -53,7 +55,7 @@ export default defineConfig({
         changeOrigin: true,
         bypass: (req) => {
           const url = req.url ?? '';
-          if (url.startsWith('/api/live') || url.startsWith('/api/chart') || url.startsWith('/api/search')) return false as unknown as string;
+          if (url.startsWith('/api/live') || url.startsWith('/api/chart') || url.startsWith('/api/search') || url.startsWith('/api/news')) return false as unknown as string;
           return undefined;
         },
       },

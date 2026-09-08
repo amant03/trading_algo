@@ -63,13 +63,18 @@ export default function AdvChart({
   onRangeChange?: (r: RangeId) => void;
 }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
-  const [w, setW] = useState(760);
+  const [w, setW] = useState(640);
   const [hoverI, setHoverI] = useState<number | null>(null);
 
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => setW(Math.max(360, el.clientWidth - 2)));
+    const apply = () => {
+      const next = Math.max(280, Math.floor(el.clientWidth));
+      setW((prev) => (Math.abs(prev - next) < 2 ? prev : next));
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
@@ -87,7 +92,7 @@ export default function AdvChart({
 
   if (!rows.length) {
     return (
-      <div className="advchart" ref={wrapRef}>
+      <div className="advchart">
         <div className="advchart-head">
           <span className="advchart-title">{symbol} · {RANGES.find((r) => r.id === range)?.label}</span>
           <span className="advchart-sub">no data for this range yet</span>
@@ -143,7 +148,7 @@ export default function AdvChart({
   const fillId = `dayfill-${symbol}-${range}`;
 
   return (
-    <div className="advchart" ref={wrapRef}>
+    <div className="advchart">
       <div className="advchart-head">
         <div>
           <div className="advchart-title">{symbol} · {RANGES.find((r) => r.id === range)?.label} · NSE</div>
@@ -169,8 +174,13 @@ export default function AdvChart({
         </div>
       </div>
 
-      <div className="advchart-body" onMouseLeave={() => setHoverI(null)}>
-        <svg width={w} height={h} onMouseMove={(e) => {
+      <div className="advchart-body" ref={wrapRef} onMouseLeave={() => setHoverI(null)}>
+        <svg
+          width="100%"
+          height={h}
+          viewBox={`0 0 ${Math.max(w, 1)} ${h}`}
+          preserveAspectRatio="none"
+          onMouseMove={(e) => {
           const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
           const px = ((e.clientX - rect.left - PAD_L) / plotW) * (rows.length - 1);
           setHoverI(px >= 0 && px <= rows.length - 1 ? Math.round(px) : null);
