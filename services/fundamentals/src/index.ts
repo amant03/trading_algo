@@ -6,6 +6,7 @@ import {
   TOPICS,
   dbReady,
   kafkaReady,
+  waitForInstruments,
   Fundamentals,
   CompanyRelation,
   Instrument,
@@ -103,8 +104,8 @@ async function replaceRelations(relations: CompanyRelation[]): Promise<void> {
   );
 }
 
-async function runOnce(peers: Instrument[]): Promise<number> {
-  const instruments = await loadInstruments();
+async function runOnce(): Promise<number> {
+  const [instruments, peers] = await Promise.all([loadInstruments(), loadInstruments()]);
   let published = 0;
   for (const inst of instruments) {
     const { fundamentals, relations } = generateCompany(inst, peers);
@@ -121,14 +122,16 @@ async function main(): Promise<void> {
   if (!(await dbReady())) throw new Error('PostgreSQL unavailable');
   if (!(await kafkaReady())) throw new Error('Kafka unavailable');
 
-  const peers = await loadInstruments();
-  const first = await runOnce(peers);
+  // The universe is seeded by market-data — wait for it before first publish.
+  const count = await waitForInstruments();
+  logger.info({ instruments: count }, 'instrument universe ready');
+  const first = await runOnce();
   logger.info({ companies: first }, 'fundamentals generated & published');
 
   // periodic refresh picks up new instruments (keeps the feed warm)
   const timer = setInterval(async () => {
     try {
-      const done = await runOnce(peers);
+      const done = await runOnce();
       logger.info({ companies: done }, 'fundamentals refreshed');
     } catch (err) {
       logger.error({ err: (err as Error).message }, 'fundamentals refresh failed');

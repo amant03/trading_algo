@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, NavLink } from 'react-router-dom';
-import { useLive } from '../ws';
+import { useLive, type FeedMode } from '../ws';
 import { fmtTime } from '../format';
 
 const NAV = [
@@ -10,14 +10,30 @@ const NAV = [
   { to: '/watchlist', label: 'Watchlist' },
 ];
 
+const MODE_LABEL: Record<FeedMode, string> = {
+  live: 'LIVE FEED',
+  polling: 'REST POLLING',
+  snapshot: 'LAST CI SNAPSHOT',
+  offline: 'OFFLINE',
+};
+
+const MODE_COLOR: Record<FeedMode, { fg: string; bg: string; dot: string }> = {
+  live: { fg: 'var(--up)', bg: 'rgba(0,184,119,0.08)', dot: 'var(--up)' },
+  polling: { fg: 'var(--amber)', bg: 'rgba(255,179,71,0.08)', dot: 'var(--amber)' },
+  snapshot: { fg: '#4cc9f0', bg: 'rgba(76,201,240,0.08)', dot: '#4cc9f0' },
+  offline: { fg: 'var(--down)', bg: 'rgba(255,92,92,0.08)', dot: 'var(--down)' },
+};
+
 export default function Topbar() {
-  const connected = useLive((s) => s.connected);
+  const mode = useLive((s) => s.mode);
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
+
+  const color = MODE_COLOR[mode];
 
   return (
     <header className="topbar">
@@ -41,9 +57,21 @@ export default function Topbar() {
         <span className="mono muted" style={{ fontSize: 12 }}>
           {fmtTime(now)}
         </span>
-        <span className={connected ? 'live-pill' : 'live-pill'} style={connected ? undefined : { color: 'var(--down)', borderColor: 'rgba(255,92,92,0.3)', background: 'rgba(255,92,92,0.08)' }}>
-          <span className="dot" style={connected ? undefined : { background: 'var(--down)' }} />
-          {connected ? 'LIVE FEED' : 'RECONNECTING'}
+        <span
+          className="live-pill"
+          title={
+            mode === 'live'
+              ? 'WebSocket stream connected to the backend'
+              : mode === 'polling'
+                ? 'Backend reachable over REST — polling every 4s'
+                : mode === 'snapshot'
+                  ? 'No live backend — showing last automation snapshot'
+                  : 'No backend and no snapshot available'
+          }
+          style={{ color: color.fg, borderColor: color.fg + '4d', background: color.bg }}
+        >
+          <span className="dot" style={{ background: color.dot }} />
+          {MODE_LABEL[mode]}
         </span>
       </div>
     </header>

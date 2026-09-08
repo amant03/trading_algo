@@ -152,13 +152,11 @@ export class PaperBroker {
       const price = this.lastPrices.get(order.instrumentId) ?? order.limitPrice ?? 0;
       await this.fillOrder(order, price);
     } else {
-      // LIMIT order: store and wait for price
-      await query(
-        `UPDATE orders SET status = 'PENDING' WHERE id = $1`,
-        [order.id],
-      );
+      // LIMIT order: store and wait for price. Never publish back to the orders
+      // topic — this consumer reads it; echoing would loop forever.
+      if (this.limitOrders.some((lo) => lo.order.id === order.id)) return;
+      await query(`UPDATE orders SET status = 'PENDING' WHERE id = $1`, [order.id]);
       this.limitOrders.push({ order, triggerPrice: order.limitPrice ?? 0 });
-      await publishBatch(TOPICS.orders, [{ payload: { ...order, status: 'PENDING' }, key: order.symbol }]);
     }
   }
 
@@ -194,7 +192,8 @@ export class PaperBroker {
   async fillOrder(order: Order, marketPrice: number): Promise<void> {
     const price = round4(marketPrice * (1 + (order.side === 'BUY' ? SLIPPAGE : -SLIPPAGE)));
 
-    await withTransaction(async (client) => {
+    try {
+      await withTransaction(async (client) => {
       const current = (await client.query<{ status: string }>(
         'SELECT status FROM orders WHERE id = $1', [order.id],
       )).rows[0];
@@ -267,6 +266,14 @@ export class PaperBroker {
         [this.cash, this.cash, ACCOUNT_ID],
       );
     });
+    } catch (err) {
+      // Persist the rejection outside the aborted transaction so orders don't
+      // stay PENDING forever.
+      if (err instanceof Error && err.message.startsWith('insufficient')) {
+        await query(`UPDATE orders SET status = 'REJECTED', updated_at = now() WHERE id = $1`, [order.id]).catch(() => void 0);
+      }
+      throw err;
+    }
 
     this.recomputeEquity();
     const filled: Order = { ...order, status: 'FILLED', filledQty: order.quantity, avgPrice: price, updatedAt: Date.now() };

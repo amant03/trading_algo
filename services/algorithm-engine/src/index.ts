@@ -10,6 +10,8 @@ import {
   Candle,
   Signal,
   AlgorithmConfig,
+  waitForInstruments,
+  waitForCandles,
 } from '@trading/shared';
 import { AlgorithmEngine, DEFAULT_CONFIGS } from './engine.js';
 
@@ -98,6 +100,13 @@ async function main(): Promise<void> {
   if (!(await kafkaReady())) throw new Error('Kafka unavailable');
 
   await seedDefaultConfigs();
+
+  // The universe and history are seeded by the market-data service. Starting in
+  // parallel, we must wait — otherwise we cache an empty instrument set forever.
+  const count = await waitForInstruments();
+  logger.info({ instruments: count }, 'instrument universe ready');
+  await waitForCandles(180_000, 50);
+  logger.info('candle history ready');
 
   const engine = new AlgorithmEngine();
   engine.setInstruments(await loadInstruments());

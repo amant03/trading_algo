@@ -6,6 +6,7 @@ import {
   TOPICS,
   dbReady,
   kafkaReady,
+  waitForCandles,
   Signal,
   Order,
   Snapshot,
@@ -37,6 +38,8 @@ async function main(): Promise<void> {
   broker.setSymbols(await loadSymbolMap());
   await broker.init();
 
+  // market-data backfills candles in parallel — wait so opening marks are real
+  await waitForCandles(180_000, 50);
   const prices = await loadLatestPrices();
   for (const [id, price] of prices) broker.lastPrices.set(id, price);
   logger.info({ priced: prices.size }, 'last prices loaded');

@@ -20,6 +20,9 @@ export const DEFAULT_CONFIGS: AlgorithmConfig[] = [
   { strategy: 'macd_cross', enabled: true, params: { fast: 12, slow: 26, signal: 9 } },
   { strategy: 'bb_breakout', enabled: true, params: { period: 20, mult: 2 } },
   { strategy: 'supertrend', enabled: true, params: { period: 10, mult: 3 } },
+  { strategy: 'stoch_cross', enabled: true, params: { kPeriod: 14, dPeriod: 3, oversold: 20, overbought: 80 } },
+  { strategy: 'vwap_reversion', enabled: true, params: { lookback: 60, bufferPct: 0.05 } },
+  { strategy: 'donchian_breakout', enabled: true, params: { period: 20 } },
 ];
 
 interface StrategyResult {
@@ -239,6 +242,47 @@ export class AlgorithmEngine {
         if (Number.isNaN(p.line) || Number.isNaN(c.line)) return null;
         if (p.direction === 'down' && c.direction === 'up') return { direction: 'BUY', strength: strength(65), reason: `SuperTrend flipped to UP (trend reversal bullish)` };
         if (p.direction === 'up' && c.direction === 'down') return { direction: 'SELL', strength: strength(65), reason: `SuperTrend flipped to DOWN (trend reversal bearish)` };
+        return null;
+      }
+      case 'stoch_cross': {
+        const oversold = Number(params.oversold ?? 20);
+        const overbought = Number(params.overbought ?? 80);
+        const s = ind.stoch;
+        const p = s[s.length - 2] as { k: number; d: number };
+        const c = s[s.length - 1] as { k: number; d: number };
+        if (!p || !c || Number.isNaN(p.k) || Number.isNaN(p.d) || Number.isNaN(c.k) || Number.isNaN(c.d)) return null;
+        if (p.k <= p.d && c.k > c.d && c.k < oversold + 15) return { direction: 'BUY', strength: strength(60), reason: `Stochastic %K crossed above %D from oversold (${c.k.toFixed(1)})` };
+        if (p.k >= p.d && c.k < c.d && c.k > overbought - 15) return { direction: 'SELL', strength: strength(60), reason: `Stochastic %K crossed below %D from overbought (${c.k.toFixed(1)})` };
+        return null;
+      }
+      case 'vwap_reversion': {
+        const lookback = Math.min(Number(params.lookback ?? 60), window.length - 1);
+        const bufferPct = Number(params.bufferPct ?? 0.05);
+        let pv = 0;
+        let v = 0;
+        for (let i = window.length - lookback - 1; i < window.length; i++) {
+          const b = window[i];
+          const tp = (b.high + b.low + b.close) / 3;
+          pv += tp * b.volume;
+          v += b.volume;
+        }
+        if (!v) return null;
+        const vwap = pv / v;
+        const buf = vwap * (bufferPct / 100);
+        if (prev.close < vwap - buf && last.close > vwap) return { direction: 'BUY', strength: strength(62), reason: `Price reclaimed VWAP ${vwap.toFixed(2)} from below` };
+        if (prev.close > vwap + buf && last.close < vwap) return { direction: 'SELL', strength: strength(62), reason: `Price lost VWAP ${vwap.toFixed(2)} from above` };
+        return null;
+      }
+      case 'donchian_breakout': {
+        const period = Math.min(Number(params.period ?? 20), window.length - 1);
+        let hi = -Infinity;
+        let lo = Infinity;
+        for (let i = window.length - period - 1; i < window.length - 1; i++) {
+          hi = Math.max(hi, window[i].high);
+          lo = Math.min(lo, window[i].low);
+        }
+        if (last.close > hi) return { direction: 'BUY', strength: strength(64), reason: `Donchian breakout: close above ${period}-bar high ${hi.toFixed(2)}` };
+        if (last.close < lo) return { direction: 'SELL', strength: strength(64), reason: `Donchian breakdown: close below ${period}-bar low ${lo.toFixed(2)}` };
         return null;
       }
       default:

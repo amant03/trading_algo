@@ -30,6 +30,7 @@ export interface MarketOverview {
   gainers: Snapshot[];
   losers: Snapshot[];
   topVolume: Snapshot[];
+  updatedAt?: number;
 }
 
 export interface Candle {

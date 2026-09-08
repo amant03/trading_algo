@@ -1,6 +1,18 @@
 import { pool } from '@trading/shared';
-import { writeFileSync } from 'fs';
+import { writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
+
+const API = process.env.REPORT_API_URL ?? 'http://127.0.0.1:8080';
+
+async function fetchJson(path: string): Promise<unknown | null> {
+  try {
+    const res = await fetch(`${API}${path}`);
+    if (!res.ok) return null;
+    return (await res.json()) as unknown;
+  } catch {
+    return null;
+  }
+}
 
 async function main() {
   const [instruments, candles, signals, orders, trades, positions, account, latestSignals, newsCount] = await Promise.all([
@@ -36,14 +48,35 @@ async function main() {
 
   console.log(JSON.stringify(report, null, 2));
 
-  const outPath = join(process.cwd(), 'scripts', 'ci', 'report-latest.json');
-  writeFileSync(outPath, JSON.stringify(report, null, 2));
-  console.error(`Report written to ${outPath}`);
+  writeFileSync(join(process.cwd(), 'scripts', 'ci', 'report-latest.json'), JSON.stringify(report, null, 2));
+
+  // Snapshot for the deployed frontend: captures the live API state at the end
+  // of the run so the Vercel UI can render real data even with no backend.
+  const [overview, instrumentQuotes, signalFeed, newsFeed] = await Promise.all([
+    fetchJson('/api/market/overview'),
+    fetchJson('/api/instruments'),
+    fetchJson('/api/signals?limit=60'),
+    fetchJson('/api/news?limit=60'),
+  ]);
+
+  const uiSnapshot = {
+    generatedAt: report.timestamp,
+    report,
+    overview,
+    instruments: instrumentQuotes,
+    signals: signalFeed,
+    news: newsFeed,
+  };
+  mkdirSync(join(process.cwd(), 'frontend', 'public'), { recursive: true });
+  writeFileSync(
+    join(process.cwd(), 'frontend', 'public', 'snapshot.json'),
+    JSON.stringify(uiSnapshot),
+  );
 
   await pool.end();
 }
 
 main().catch((e) => {
-  console.error('Report generation failed:', e.message);
+  console.error('Report generation failed:', e instanceof Error ? e.message : e);
   process.exit(1);
 });

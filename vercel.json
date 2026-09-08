@@ -2,8 +2,5 @@
   "framework": "vite",
   "buildCommand": "npm --prefix frontend run build",
   "outputDirectory": "frontend/dist",
-  "rewrites": [
-    { "source": "/api/:path*", "destination": "https://steps-entering-saturday-cole.trycloudflare.com/api/:path*" },
-    { "source": "/(.*)", "destination": "/index.html" }
-  ]
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
 }

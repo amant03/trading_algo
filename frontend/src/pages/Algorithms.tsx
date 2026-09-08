@@ -11,6 +11,9 @@ const META: Record<string, { desc: string; accent: string }> = {
   macd_cross: { desc: 'Momentum MACD crossovers on the histogram with volume confirmation for higher confidence entries.', accent: '#9d7bff' },
   bb_breakout: { desc: 'Volatility breakouts — entries on strong closes beyond the upper or lower Bollinger bands.', accent: '#00d68f' },
   supertrend: { desc: 'SuperTrend trend-flip system — rides trends while the ATF-based band holds its direction.', accent: '#ff5c5c' },
+  stoch_cross: { desc: 'Stochastic momentum — %K crossing %D out of oversold / overbought zones for timing entries.', accent: '#4cc9f0' },
+  vwap_reversion: { desc: 'Institutional VWAP reclaim — entries when price reclaims or loses the volume-weighted average.', accent: '#f72585' },
+  donchian_breakout: { desc: 'Donchian channel breakout — classic trend-following entries on N-bar high/low breaks.', accent: '#ffd166' },
 };
 
 export default function Algorithms() {

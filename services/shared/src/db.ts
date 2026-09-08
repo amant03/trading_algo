@@ -60,3 +60,40 @@ export async function dbReady(waitMs = 15_000): Promise<boolean> {
 }
 
 export const closeDb = () => pool.end();
+
+/**
+ * Block until the instruments table has been seeded by market-data.
+ * Services started in parallel must not cache an empty universe.
+ */
+export async function waitForInstruments(waitMs = 120_000, minCount = 1): Promise<number> {
+  const start = Date.now();
+  for (;;) {
+    try {
+      const res = await query<{ c: number }>(
+        "SELECT COUNT(*)::int AS c FROM instruments WHERE status = 'ACTIVE'",
+      );
+      if (res.rows[0].c >= minCount) return res.rows[0].c;
+    } catch {
+      /* table may not exist yet on a fresh schema */
+    }
+    if (Date.now() - start > waitMs) throw new Error(`instruments not seeded within ${waitMs}ms`);
+    logger.debug('waiting for instruments to be seeded...');
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
+
+/** Block until at least `minCount` candles exist (market-data backfill done). */
+export async function waitForCandles(waitMs = 180_000, minCount = 1): Promise<number> {
+  const start = Date.now();
+  for (;;) {
+    try {
+      const res = await query<{ c: number }>('SELECT COUNT(*)::int AS c FROM candles');
+      if (res.rows[0].c >= minCount) return res.rows[0].c;
+    } catch {
+      /* table may not exist yet on a fresh schema */
+    }
+    if (Date.now() - start > waitMs) throw new Error(`candles not backfilled within ${waitMs}ms`);
+    logger.debug('waiting for candle backfill...');
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}

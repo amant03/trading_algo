@@ -13,7 +13,7 @@ $env:JAVA_HOME = $candidates[0]
 $env:Path = "$env:JAVA_HOME\bin;" + $env:Path
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-$kafkaHome = Join-Path $root ".infra\kafka_2.13-3.9.0"
+$kafkaHome = if ($env:KAFKA_HOME) { $env:KAFKA_HOME } else { Join-Path $root ".infra\kafka_2.13-3.9.0" }
 $props = Join-Path $PSScriptRoot "server.properties"
 $dataDir = Join-Path $root ".infra\kafka-data"
 $logs = Join-Path $root ".infra\logs"

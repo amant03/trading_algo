@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { get } from '../api';
 import { useLive } from '../ws';
 import { fmt, fmtPct, fmtCompact, cls } from '../format';
-import type { Instrument, MarketOverview, Snapshot, Candle } from '../types';
+import type { Instrument, Snapshot, Candle } from '../types';
 import { Sparkline } from '../components/Sparkline';
 import SignalFeed from '../components/SignalFeed';
 import NewsFeed from '../components/NewsFeed';
@@ -24,11 +24,10 @@ export default function Dashboard() {
   const snapshots = useLive((s) => s.snapshots);
   const signals = useLive((s) => s.signals);
   const news = useLive((s) => s.news);
-  const [overview, setOverview] = useState<MarketOverview | null>(null);
+  const overview = useLive((s) => s.overview);
   const [instruments, setInstruments] = useState<Instrument[]>([]);
 
   useEffect(() => {
-    get<MarketOverview>('/api/market/overview').then(setOverview).catch(() => {});
     get<Instrument[]>('/api/instruments').then(setInstruments).catch(() => {});
   }, []);
 

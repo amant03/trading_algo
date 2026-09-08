@@ -2,7 +2,11 @@ name: Backend Automation
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    # Every 30 min. The monitored window exits early once the engine is
+    # trading, so typical runs cost ~4-6 min instead of the old fixed 10+.
+    - cron: '*/30 * * * *'
+    # Once-a-day deep run (also survives if the 30-min cadence is ever removed)
+    - cron: '0 3 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -15,6 +19,7 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
 
     services:
       postgres:
@@ -53,6 +58,12 @@ jobs:
           --health-timeout 10s
           --health-retries 15
 
+    env:
+      KAFKAJS_NO_PARTITIONER_WARNING: 1
+      # Real NSE data overlay (Yahoo Finance, free): real daily history +
+      # live quotes on top of the simulated 1m feed that drives strategies.
+      REAL_DATA: '1'
+
     steps:
       - uses: actions/checkout@v4
 
@@ -62,12 +73,10 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --no-audit --no-fund
 
       - name: Apply database schema
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client > /dev/null
-          PGPASSWORD=trading_pass psql -h 127.0.0.1 -U trading_app -d trading_platform -f scripts/db/schema.sql
+        run: node node_modules/tsx/dist/cli.mjs scripts/db/apply-schema.ts
 
       - name: Start backend services
         run: |
@@ -80,47 +89,81 @@ jobs:
 
       - name: Wait for services to initialize
         run: |
-          for i in $(seq 1 60); do
+          for i in $(seq 1 120); do
             if curl -sf http://127.0.0.1:8080/api/health > /dev/null 2>&1; then
               echo "API ready after ${i}s"
               exit 0
             fi
             sleep 1
           done
-          echo "API failed to start within 60s"
-          cat .infra/logs/api.log
+          echo "API failed to start within 120s"
+          for f in .infra/logs/*.log; do echo "===== $f ====="; tail -30 "$f"; done
           exit 1
 
-      - name: Verify pipeline
+      - name: Verify pipeline boot
         run: |
           echo "=== Health ==="
           curl -sf http://127.0.0.1:8080/api/health | jq .
           echo "=== Overview ==="
           curl -sf http://127.0.0.1:8080/api/market/overview | jq '{index: .index.price, adv: .market.advancers, dec: .market.decliners}'
-          echo "=== Signals ==="
-          curl -sf http://127.0.0.1:8080/api/signals | jq 'length' -r
 
-      - name: Run pipeline (8 minutes)
-        run: |
-          echo "Pipeline running at $(date -u +%Y-%m-%dT%H:%M:%SZ)..."
-          sleep 480
-          echo "Pipeline window complete at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      # Monitored window: polls the DB, exits early once strategies produce
+      # signals AND the executor trades. Fails loudly if the brain is silent.
+      - name: Run pipeline window (monitored)
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/monitor.ts
 
-      - name: Generate report
+      - name: Generate report + UI snapshot
         run: node node_modules/tsx/dist/cli.mjs scripts/ci/report.ts
 
-      - name: Upload logs
+      - name: Job summary
+        if: always()
+        run: |
+          if [ -f scripts/ci/report-latest.json ]; then
+            {
+              echo "## Pipeline report ($(date -u '+%Y-%m-%d %H:%M UTC'))"
+              echo '```json'
+              cat scripts/ci/report-latest.json
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload service logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: backend-logs-${{ github.run_id }}
           path: .infra/logs/
-          retention-days: 7
+          retention-days: 14
 
-      - name: Upload report
+      - name: Upload report artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: report-${{ github.run_id }}
           path: scripts/ci/report-latest.json
           retention-days: 30
+          if-no-files-found: ignore
+
+      # Audit trail: every run commits its report + UI snapshot to the
+      # `automation-data` branch (the deployed UI reads the latest snapshot
+      # straight from there — no redeploy needed). Once a day (and on manual
+      # runs) the snapshot is also promoted to `main` so the bundled fallback
+      # stays fresh.
+      - name: Commit audit trail & UI snapshot
+        run: |
+          git config user.name "automation-bot"
+          git config user.email "actions@github.com"
+          mkdir -p reports
+          ts=$(date -u +%Y%m%d-%H%M%S)
+          cp scripts/ci/report-latest.json "reports/run-$ts-$GITHUB_RUN_ID.json"
+          cp scripts/ci/report-latest.json reports/latest.json
+          git add reports/ frontend/public/snapshot.json
+          if git diff --cached --quiet; then
+            echo "Nothing new to commit"
+            exit 0
+          fi
+          git commit -m "chore(automation): pipeline report #$GITHUB_RUN_NUMBER"
+          git push origin HEAD:automation-data
+          if [ "${{ github.event.schedule }}" = "0 3 * * *" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            git push origin HEAD:main || echo "main moved concurrently — snapshot stays on automation-data branch"
+          fi

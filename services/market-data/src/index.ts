@@ -17,8 +17,13 @@ import {
 } from '@trading/shared';
 import { InstrumentSimulator } from './simulator.js';
 import { backfillInstruments, insertCandles } from './backfill.js';
+import { syncRealHistory, refreshRealQuotes } from './real-data.js';
 
 const TARGET_INDEX = 24700;
+// REAL_DATA=1 overlays real NSE history + live quotes (Yahoo Finance, free).
+// The simulator keeps driving 1m candles around the real last close so the
+// strategy engine and paper broker always have a live feed.
+const REAL_MODE = process.env.REAL_DATA === '1';
 
 async function seedAndLoadInstruments(): Promise<Instrument[]> {
   const count = (await query('SELECT COUNT(*)::int AS c FROM instruments')).rows[0].c;
@@ -122,6 +127,16 @@ async function main(): Promise<void> {
 
   const instruments = await seedAndLoadInstruments();
   await backfillInstruments(instruments);
+
+  if (REAL_MODE) {
+    try {
+      const bars = await syncRealHistory(instruments);
+      logger.info({ bars }, 'real-data overlay ready');
+    } catch (err) {
+      logger.warn({ err: (err as Error).message }, 'real-data sync failed, simulation continues');
+    }
+  }
+
   const scale = computeIndexScale(instruments);
 
   const simulators = instruments.map((inst) => new InstrumentSimulator(inst, config.sim.seed + inst.id * 9973));
@@ -157,8 +172,11 @@ async function main(): Promise<void> {
       const tasks: Promise<void>[] = [
         publishBatch(TOPICS.candles, candles.map((c) => ({ payload: c, key: c.symbol }))),
         publishBatch(TOPICS.ticks, ticks.map((t) => ({ payload: t, key: t.symbol }))),
-        publishBatch(TOPICS.snapshots, snaps.map((s) => ({ payload: s, key: s.symbol }))),
       ];
+      // In real mode the quote refresher owns per-symbol snapshots (real NSE
+      // prices); we only publish the synthetic index snapshot here.
+      const snapsToPublish = REAL_MODE ? [snaps[snaps.length - 1]] : snaps;
+      tasks.push(publishBatch(TOPICS.snapshots, snapsToPublish.map((s) => ({ payload: s, key: s.symbol }))));
       await Promise.all(tasks);
 
       if (now - lastFlush >= 3000) {
@@ -177,8 +195,19 @@ async function main(): Promise<void> {
   // fire one immediately
   await tick();
 
+  let quoteTimer: NodeJS.Timeout | null = null;
+  if (REAL_MODE) {
+    const refresh = () =>
+      refreshRealQuotes(instruments).catch((err) =>
+        logger.warn({ err: (err as Error).message }, 'real quote refresh failed'),
+      );
+    await refresh();
+    quoteTimer = setInterval(refresh, 60_000);
+  }
+
   const shutdown = async (): Promise<void> => {
     clearInterval(timer);
+    if (quoteTimer) clearInterval(quoteTimer);
     logger.info('flushing remaining candles');
     if (pendingCandles.length) await insertCandles(pendingCandles.splice(0));
     await pool.end();

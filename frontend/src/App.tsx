@@ -2,6 +2,7 @@ import { NavLink, Route, Routes } from 'react-router-dom';
 import Topbar from './components/Topbar';
 import Ticker from './components/Ticker';
 import Sidebar from './components/Sidebar';
+import StatusBanner from './components/StatusBanner';
 import Dashboard from './pages/Dashboard';
 import Stock from './pages/Stock';
 import Trading from './pages/Trading';
@@ -14,6 +15,7 @@ export default function App() {
     <div className="app">
       <div className="grain" />
       <Topbar />
+      <StatusBanner />
       <Ticker />
       <div className="main">
         <Sidebar />
