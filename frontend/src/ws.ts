@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { get } from './api';
-import type { Snapshot, Signal, NewsItem, Order, Trade, MarketOverview } from './types';
+import type { Snapshot, Signal, NewsItem, Order, Trade, MarketOverview, Instrument } from './types';
 
 export interface LiveCandle {
   instrumentId: number;
@@ -27,10 +27,14 @@ interface LiveState {
   news: NewsItem[];
   orders: Order[];
   trades: Trade[];
+  instruments: Instrument[];
+  snapshotAt: number | null;
   setMode: (m: FeedMode) => void;
   setReady: (v: boolean) => void;
   touch: () => void;
   setOverview: (o: MarketOverview | null) => void;
+  setInstruments: (items: Instrument[]) => void;
+  setSnapshotAt: (t: number | null) => void;
   updateSnapshots: (items: Snapshot[]) => void;
   updateCandles: (items: LiveCandle[]) => void;
   addSignal: (s: Signal) => void;
@@ -57,10 +61,14 @@ export const useLive = create<LiveState>((set, get) => ({
   news: [],
   orders: [],
   trades: [],
+  instruments: [],
+  snapshotAt: null,
   setMode: (m) => set({ mode: m }),
   setReady: (v) => set({ ready: v }),
   touch: () => set({ lastEventAt: Date.now() }),
   setOverview: (o) => set({ overview: o }),
+  setInstruments: (items) => set({ instruments: items }),
+  setSnapshotAt: (t) => set({ snapshotAt: t }),
   updateSnapshots: (items) => {
     const snapshots = { ...get().snapshots };
     for (const item of items) snapshots[item.symbol] = item;
@@ -80,6 +88,12 @@ export const useLive = create<LiveState>((set, get) => ({
 }));
 
 interface QuoteLike {
+  id?: number | null;
+  name?: string | null;
+  sector?: string | null;
+  isin?: string | null;
+  exchange?: string | null;
+  marketCap?: number | null;
   symbol?: string | null;
   price?: number | null;
   changePct?: number | null;
@@ -90,8 +104,7 @@ interface QuoteLike {
 }
 
 /** Map /api/instruments rows or snapshot.json quotes into Snapshot shape. */
-function quotesToSnapshots(list: QuoteLike[]): Snapshot[] {
-  const now = Date.now();
+function quotesToSnapshots(list: QuoteLike[]): Snapshot[] {  const now = Date.now();
   return list
     .filter((q) => q.symbol)
     .map((q) => {
@@ -113,6 +126,25 @@ function quotesToSnapshots(list: QuoteLike[]): Snapshot[] {
     });
 }
 
+/** Normalise snapshot/REST instrument rows into the frontend Instrument type. */
+function toInstruments(list: QuoteLike[]): Instrument[] {
+  return list
+    .filter((q) => q.symbol)
+    .map((q) => {
+      const price = Number(q.price ?? q.basePrice ?? 0);
+      return {
+        id: Number(q.id ?? 0),
+        symbol: String(q.symbol),
+        name: String(q.name ?? q.symbol),
+        sector: String(q.sector ?? ''),
+        isin: String(q.isin ?? ''),
+        exchange: String(q.exchange ?? 'NSE'),
+        marketCap: Number(q.marketCap ?? 0),
+        basePrice: price,
+      } satisfies Instrument;
+    });
+}
+
 async function pollOnce(): Promise<boolean> {
   try {
     const [quotes, overview, sigs, news] = await Promise.all([
@@ -122,7 +154,10 @@ async function pollOnce(): Promise<boolean> {
       get<NewsItem[]>('/api/news?limit=60').catch(() => null),
     ]);
     const live = useLive.getState();
-    if (quotes.length) live.updateSnapshots(quotesToSnapshots(quotes));
+    if (quotes.length) {
+      live.updateSnapshots(quotesToSnapshots(quotes));
+      live.setInstruments(toInstruments(quotes));
+    }
     if (overview) live.setOverview(overview);
     if (sigs && !live.signals.length) live.replaceSignals(sigs);
     else if (sigs && sigs.length > live.signals.length) live.replaceSignals(sigs);
@@ -170,16 +205,17 @@ async function loadCiSnapshot(): Promise<boolean> {
       const data = (await snap.json()) as {
         generatedAt?: string;
         overview?: MarketOverview | null;
-        instruments?: QuoteLike[] | null;
-        signals?: Signal[] | null;
+        instruments?: Array<Record<string, unknown> & QuoteLike> | null;        signals?: Signal[] | null;
         news?: NewsItem[] | null;
       };
       if (!data.instruments?.length) continue;
       const live = useLive.getState();
       live.updateSnapshots(quotesToSnapshots(data.instruments));
+      live.setInstruments(toInstruments(data.instruments));
       if (data.overview) live.setOverview(data.overview);
       if (data.signals?.length) live.replaceSignals(data.signals);
       if (data.news?.length) live.replaceNews(data.news);
+      if (data.generatedAt) live.setSnapshotAt(new Date(data.generatedAt).getTime());
       if (live.mode === 'offline') live.setMode('snapshot');
       return true;
     } catch {
