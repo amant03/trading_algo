@@ -1,6 +1,6 @@
 import { create } from 'zustand';
-import { get } from './api';
-import type { Snapshot, Signal, NewsItem, Order, Trade, MarketOverview, Instrument, StockAnalysis, Sparkline } from './types';
+import { get, post, del } from './api';
+import type { Snapshot, Signal, NewsItem, NewsArticle, Order, Trade, MarketOverview, Instrument, StockAnalysis, Sparkline } from './types';
 
 export interface LiveCandle {
   instrumentId: number;
@@ -31,6 +31,8 @@ interface LiveState {
   snapshotAt: number | null;
   fundamentals: Record<string, StockAnalysis>;
   sparklines: Record<string, Sparkline>;
+  newsBySymbol: Record<string, NewsArticle[]>;
+  watchlist: string[];
   setMode: (m: FeedMode) => void;
   setReady: (v: boolean) => void;
   touch: () => void;
@@ -38,6 +40,9 @@ interface LiveState {
   setInstruments: (items: Instrument[]) => void;
   setSnapshotAt: (t: number | null) => void;
   setAnalysis: (f: Record<string, StockAnalysis>, s: Record<string, Sparkline>) => void;
+  setNewsBySymbol: (rec: Record<string, NewsArticle[]>) => void;
+  setWatchlist: (list: string[]) => void;
+  toggleWatch: (sym: string) => boolean;
   updateSnapshots: (items: Snapshot[]) => void;
   updateCandles: (items: LiveCandle[]) => void;
   addSignal: (s: Signal) => void;
@@ -54,6 +59,44 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 let relayTimer: ReturnType<typeof setInterval> | null = null;
 let snapshotTimer: ReturnType<typeof setInterval> | null = null;
 
+// ---- persistent watchlist (works on the static deploy with no backend) ----
+const WL_KEY = 'tradealgo.watchlist.v1';
+
+function loadWatchlist(): string[] {
+  try {
+    const raw = localStorage.getItem(WL_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) return [...new Set(arr.filter((x): x is string => typeof x === 'string'))];
+    }
+  } catch {
+    // ignore corrupt storage
+  }
+  return [];
+}
+
+function saveWatchlist(list: string[]): void {
+  try {
+    localStorage.setItem(WL_KEY, JSON.stringify(list));
+  } catch {
+    // storage unavailable — skip persistence
+  }
+}
+
+/** Merge the server watchlist in when a real backend is reachable. */
+export async function syncWatchlist(): Promise<void> {
+  try {
+    const server = await get<string[]>('/api/watchlist');
+    if (!Array.isArray(server)) return;
+    const st = useLive.getState();
+    const merged = [...new Set([...st.watchlist, ...server])];
+    useLive.getState().setWatchlist(merged);
+    saveWatchlist(merged);
+  } catch {
+    // no backend — local list stands
+  }
+}
+
 export const useLive = create<LiveState>((set, get) => ({
   mode: 'offline',
   ready: false,
@@ -69,6 +112,8 @@ export const useLive = create<LiveState>((set, get) => ({
   snapshotAt: null,
   fundamentals: {},
   sparklines: {},
+  newsBySymbol: {},
+  watchlist: loadWatchlist(),
   setMode: (m) => set({ mode: m }),
   setReady: (v) => set({ ready: v }),
   touch: () => set({ lastEventAt: Date.now() }),
@@ -76,6 +121,20 @@ export const useLive = create<LiveState>((set, get) => ({
   setInstruments: (items) => set({ instruments: items }),
   setSnapshotAt: (t) => set({ snapshotAt: t }),
   setAnalysis: (f, s) => set((st) => ({ fundamentals: { ...st.fundamentals, ...f }, sparklines: { ...st.sparklines, ...s } })),
+  setNewsBySymbol: (rec) => set((st) => ({ newsBySymbol: { ...st.newsBySymbol, ...rec } })),
+  setWatchlist: (list) => set({ watchlist: list }),
+  toggleWatch: (sym) => {
+    const cur = get().watchlist;
+    const had = cur.includes(sym);
+    const next = had ? cur.filter((s) => s !== sym) : [...cur, sym];
+    set({ watchlist: next });
+    saveWatchlist(next);
+    // best-effort server sync — never blocks or errors the UI on the static
+    // deploy (there is no backend, so /api/watchlist 404s; local wins).
+    if (!had) post(`/api/watchlist/${encodeURIComponent(sym)}`, {}).catch(() => {});
+    else del(`/api/watchlist/${encodeURIComponent(sym)}`).catch(() => {});
+    return !had;
+  },
   updateSnapshots: (items) => {
     const snapshots = { ...get().snapshots };
     for (const item of items) snapshots[item.symbol] = item;
@@ -253,6 +312,27 @@ const ANALYSIS_URLS = [
   '/analysis.json',
 ];
 
+const NEWS_URLS = [
+  'https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/news.json',
+  '/news.json',
+];
+
+async function loadNews(): Promise<boolean> {
+  for (const url of NEWS_URLS) {
+    try {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) continue;
+      const data = (await res.json()) as { generatedAt?: string; items?: Record<string, NewsArticle[]> };
+      if (!data.items) continue;
+      useLive.getState().setNewsBySymbol(data.items);
+      return true;
+    } catch {
+      continue;
+    }
+  }
+  return false;
+}
+
 async function loadAnalysis(): Promise<boolean> {
   for (const url of ANALYSIS_URLS) {
     try {
@@ -297,6 +377,7 @@ async function loadCiSnapshot(): Promise<boolean> {
       if (data.generatedAt) live.setSnapshotAt(new Date(data.generatedAt).getTime());
       if (live.mode === 'offline') live.setMode('snapshot');
       void loadAnalysis();
+      void loadNews();
       startRelay();
       return true;
     } catch {
@@ -328,6 +409,13 @@ export function connectLive() {
   // No backend reachable at boot? Load the last CI-committed snapshot (and
   // keep retrying) so the terminal never renders an empty shell.
   ensureSnapshot();
+  void syncWatchlist();
+  void loadAnalysis();
+  void loadNews();
+  setInterval(() => {
+    void loadNews();
+    void loadAnalysis();
+  }, 600_000);
 
   try {
     socket = new WebSocket(url);

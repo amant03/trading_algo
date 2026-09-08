@@ -121,6 +121,16 @@ jobs:
       - name: Generate fundamentals & analyst model
         run: node node_modules/tsx/dist/cli.mjs scripts/ci/fundamentals.ts
 
+      # Management analysis: officers + litigation scan (criminal/civil/
+      # regulatory) per company, appended to analysis.json as `management`.
+      - name: Generate management analysis
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/management.ts
+
+      # Per-stock news: Google News RSS, merged with the previous 7-day window
+      # into frontend/public/news.json.
+      - name: Refresh per-stock news
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/news.ts
+
       - name: Job summary
         if: always()
         run: |
@@ -166,6 +176,7 @@ jobs:
           git add reports/
           git add frontend/public/snapshot.json 2>/dev/null || true
           git add frontend/public/analysis.json 2>/dev/null || true
+          git add frontend/public/news.json 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "Nothing new to commit"
             exit 0

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, NavLink } from 'react-router-dom';
 import { useLive, type FeedMode } from '../ws';
 import { fmtTime } from '../format';
+import StockSearch from './StockSearch';
 
 const NAV = [
   { to: '/', label: 'Dashboard' },
@@ -40,12 +41,12 @@ export default function Topbar() {
   return (
     <header className="topbar">
       <Link to="/" className="brand">
-        <div className="brand-mark">KA</div>
+        <div className="brand-mark">TA</div>
         <div>
           <div className="brand-name">
-            KITE <em>AURORA</em>
+            TRADE <em>ALGO</em>
           </div>
-          <div className="brand-sub">Algo Trading Terminal</div>
+          <div className="brand-sub">Algorithmic Trading Terminal</div>
         </div>
       </Link>
       <nav className="nav">
@@ -55,6 +56,7 @@ export default function Topbar() {
           </NavLink>
         ))}
       </nav>
+      <StockSearch />
       <div className="topbar-right">
         <span className="mono muted" style={{ fontSize: 12 }}>
           {fmtTime(now)}

@@ -5,6 +5,9 @@
   "functions": {
     "api/live.ts": {
       "maxDuration": 30
+    },
+    "api/chart.ts": {
+      "maxDuration": 30
     }
   },
   "headers": [
@@ -22,6 +25,10 @@
     },
     {
       "source": "/analysis.json",
+      "headers": [{ "key": "Cache-Control", "value": "no-cache, must-revalidate" }]
+    },
+    {
+      "source": "/news.json",
       "headers": [{ "key": "Cache-Control", "value": "no-cache, must-revalidate" }]
     }
   ]

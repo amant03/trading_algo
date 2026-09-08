@@ -257,6 +257,7 @@ export interface StockAnalysis {
   marketCap: number | null;
   metrics: StockAnalysisMetrics;
   screens: { buffett: ScreenResult; lynch: ScreenResult; graham: ScreenResult };
+  management: MgmtAnalysis | null;
   verdict: {
     score: number;
     grade: string;
@@ -273,3 +274,48 @@ export interface StockAnalysis {
 
 export type SparklinePoint = [number, number]; // [ts, close]
 export type Sparkline = SparklinePoint[];
+
+// ---- Google-News-driven per-stock news (scripts/ci/news.ts -> news.json) ----
+
+export interface NewsArticle {
+  title: string;
+  source: string;
+  url: string;
+  publishedAt: string;
+  symbol: string;
+}
+
+export interface HistoryRow {
+  t: number;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+}
+
+// ---- Management analysis (scripts/ci/management.ts -> analysis.json) ----
+
+export interface ManagementFlag {
+  key: string;
+  label: string;
+  severity: 'good' | 'warn' | 'bad';
+}
+
+export interface LegalCase {
+  kind: 'criminal' | 'civil' | 'regulatory' | 'other';
+  title: string;
+  source: string;
+  url: string;
+  date: string | null;
+}
+
+export interface MgmtAnalysis {
+  score: number;
+  grade: string;
+  thesis: string;
+  founders: { name: string; role: string }[];
+  checks: ManagementFlag[];
+  cases: LegalCase[];
+  updatedAt: string;
+}

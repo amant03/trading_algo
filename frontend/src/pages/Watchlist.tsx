@@ -1,109 +1,103 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { get, post, del } from '../api';
 import { useLive } from '../ws';
 import { fmt, fmtPct, cls } from '../format';
 import { useToast } from '../components/Toasts';
 import type { Instrument } from '../types';
 
-interface WatchItem extends Instrument {
-  price: number;
-  changePct: number;
-}
-
 export default function Watchlist() {
   const navigate = useNavigate();
   const toast = useToast();
   const snapshots = useLive((s) => s.snapshots);
-  const [items, setItems] = useState<WatchItem[]>([]);
+  const instruments = useLive((s) => s.instruments);
+  const fundamentals = useLive((s) => s.fundamentals);
+  const watchlist = useLive((s) => s.watchlist);
+  const toggleWatch = useLive((s) => s.toggleWatch);
   const [addSymbol, setAddSymbol] = useState('');
-  const [allInstruments, setAllInstruments] = useState<Instrument[]>([]);
 
-  const refresh = useCallback(() => {
-    get<WatchItem[]>('/api/watchlist')
-      .then(setItems)
-      .catch(() => {
-        // Static deploy / no backend: seed a sensible watchlist from the
-        // snapshot feed so the page is never an empty shell.
-        const snaps = Object.values(snapshots).sort((a, b) => b.changePct - a.changePct);
-        setItems((prev) =>
-          prev.length
-            ? prev
-            : snaps.slice(0, 10).map((s) => ({
-                id: s.instrumentId,
-                symbol: s.symbol,
-                name: s.symbol,
-                sector: '',
-                isin: '',
-                exchange: 'NSE',
-                marketCap: 0,
-                basePrice: s.price,
-                price: s.price,
-                changePct: s.changePct,
-              })),
-        );
-      });
-  }, [snapshots]);
+  // union of every name we know about, so the picker always has options even
+  // before the snapshot lands
+  const all = useMemo(() => {
+    const map = new Map<string, Instrument>();
+    for (const i of instruments) map.set(i.symbol, i);
+    for (const sym of Object.keys(fundamentals)) {
+      const f = fundamentals[sym];
+      if (!map.has(sym)) {
+        map.set(sym, {
+          id: 0,
+          symbol: sym,
+          name: f.name ?? sym,
+          sector: f.sector ?? '',
+          isin: '',
+          exchange: 'NSE',
+          marketCap: f.marketCap ?? 0,
+          basePrice: f.price,
+        });
+      }
+    }
+    for (const sym of Object.keys(snapshots)) {
+      if (!map.has(sym)) {
+        const s = snapshots[sym];
+        map.set(sym, { id: 0, symbol: sym, name: sym, sector: '', isin: '', exchange: 'NSE', marketCap: 0, basePrice: s.price });
+      }
+    }
+    return [...map.values()].sort((a, b) => a.symbol.localeCompare(b.symbol));
+  }, [instruments, fundamentals, snapshots]);
 
-  useEffect(() => {
-    refresh();
-    get<Instrument[]>('/api/instruments').then(setAllInstruments).catch(() => {});
-  }, [refresh]);
-
-  useEffect(() => {
-    setItems((prev) =>
-      prev.map((w) => {
-        const s = snapshots[w.symbol];
-        return s ? { ...w, price: s.price, changePct: s.changePct } : w;
-      }),
-    );
-  }, [snapshots]);
-
-  const add = async () => {
+  const add = () => {
     const sym = addSymbol.trim().toUpperCase();
     if (!sym) return;
-    try {
-      await post(`/api/watchlist/${sym}`, {});
-      toast(`Added ${sym} to watchlist`, 'ok');
-      setAddSymbol('');
-      refresh();
-    } catch (e) {
-      toast((e as Error).message, 'err');
+    const known = all.some((i) => i.symbol === sym);
+    if (!known) {
+      toast(`Unknown symbol "${sym}" — try the search to find a valid stock`, 'err');
+      return;
     }
+    if (toggleWatch(sym)) toast(`Added ${sym} to watchlist`, 'ok');
+    else toast(`${sym} was already in the watchlist`, 'ok');
+    setAddSymbol('');
   };
 
-  const remove = async (sym: string) => {
-    try {
-      await del(`/api/watchlist/${sym}`);
-      toast(`Removed ${sym}`, 'ok');
-      refresh();
-    } catch (e) {
-      toast((e as Error).message, 'err');
-    }
+  const remove = (sym: string) => {
+    toggleWatch(sym);
+    toast(`Removed ${sym}`, 'ok');
   };
 
-  const exists = (sym: string) => items.some((w) => w.symbol === sym.toUpperCase());
+  const items = watchlist
+    .map((sym) => {
+      const i = all.find((x) => x.symbol === sym);
+      const s = snapshots[sym];
+      return {
+        symbol: sym,
+        name: i?.name ?? sym,
+        sector: i?.sector ?? (fundamentals[sym]?.sector ?? '—'),
+        price: s?.price ?? i?.basePrice ?? 0,
+        changePct: s?.changePct ?? 0,
+      };
+    })
+    .sort((a, b) => a.symbol.localeCompare(b.symbol));
+
+  const filtered = all.filter((i) => !watchlist.includes(i.symbol));
 
   return (
     <div>
       <h1 style={{ marginBottom: 4 }}>Watchlist</h1>
       <p className="muted" style={{ marginBottom: 20, fontSize: 13 }}>
-        Track your favourite names. Live prices stream over the WebSocket.
+        Track your favourite names. Saved locally so it works even without the backend.
       </p>
 
-      <div className="panel reveal" style={{ marginBottom: 16, display: 'flex', gap: 10, alignItems: 'flex-end' }}>
-        <div style={{ flex: 1 }}>
+      <div className="panel reveal" style={{ marginBottom: 16, display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 220 }}>
           <label className="mono dim" style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Add symbol</label>
-          <input className="input" list="all-instruments" value={addSymbol} placeholder="e.g. RELIANCE" onChange={(e) => setAddSymbol(e.target.value.toUpperCase())} onKeyDown={(e) => e.key === 'Enter' && add()} />
+          <input className="input" list="all-instruments" value={addSymbol} placeholder="e.g. RELIANCE or TCS" onChange={(e) => setAddSymbol(e.target.value.toUpperCase())} onKeyDown={(e) => e.key === 'Enter' && add()} />
           <datalist id="all-instruments">
-            {allInstruments.filter((i) => !exists(i.symbol)).map((i) => <option key={i.symbol} value={i.symbol}>{i.name}</option>)}
+            {filtered.map((i) => <option key={i.symbol} value={i.symbol}>{i.name}</option>)}
           </datalist>
         </div>
         <button className="btn primary" onClick={add} disabled={!addSymbol.trim()}>Add</button>
       </div>
 
       <div className="panel reveal reveal-1">
-        <div className="panel-title"><h3>Watching</h3><span className="hint">{items.length} symbols</span></div>
+        <div className="panel-title"><h3>Watching</h3><span className="hint">{items.length} symbols · local-first</span></div>
         {items.length ? (
           <div className="table-wrap">
             <table>
@@ -115,7 +109,7 @@ export default function Watchlist() {
                   <tr key={w.symbol} onClick={() => navigate(`/stock/${w.symbol}`)}>
                     <td className="sym-cell">{w.symbol}</td>
                     <td className="name-cell">{w.name}</td>
-                    <td className="muted">{w.sector ?? '—'}</td>
+                    <td className="muted">{w.sector}</td>
                     <td className="mono">{fmt(w.price)}</td>
                     <td className={cls('mono', w.changePct >= 0 ? 'up' : 'down')}>{fmtPct(w.changePct)}</td>
                     <td>

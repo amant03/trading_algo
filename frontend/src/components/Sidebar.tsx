@@ -1,36 +1,33 @@
-import { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { get } from '../api';
 import { useLive } from '../ws';
 import { fmtPct, cls } from '../format';
-import type { Instrument, Snapshot } from '../types';
+import type { Snapshot } from '../types';
 
 export default function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const snapshots = useLive((s) => s.snapshots);
-  const [instruments, setInstruments] = useState<Instrument[]>([]);
-  const [watchlist, setWatchlist] = useState<string[]>([]);
+  const instruments = useLive((s) => s.instruments);
+  const watchlist = useLive((s) => s.watchlist);
 
   const symbol = location.pathname.startsWith('/stock/') ? location.pathname.split('/')[2] : null;
-
-  useEffect(() => {
-    get<Instrument[]>('/api/instruments').then(setInstruments).catch(() => {});
-    get<string[]>('/api/watchlist').then(setWatchlist).catch(() => {});
-  }, []);
 
   const snap = (sym: string): Snapshot | undefined => snapshots[sym];
 
   const gainers = instruments
     .map((i) => ({ i, s: snap(i.symbol) }))
     .filter((x) => x.s)
-    .sort((a, b) => (b.s!.changePct) - (a.s!.changePct))
+    .sort((a, b) => b.s!.changePct - a.s!.changePct)
     .slice(0, 6);
 
   return (
     <aside className="sidebar">
       <div className="side-label">Watchlist</div>
-      {watchlist.length === 0 && <div className="dim" style={{ fontSize: 12, padding: '0 8px' }}>No symbols yet — add from a stock page.</div>}
+      {watchlist.length === 0 && (
+        <div className="dim" style={{ fontSize: 12, padding: '0 8px' }}>
+          Nothing yet — use the search bar on top or add from a stock page.
+        </div>
+      )}
       {watchlist.map((sym) => {
         const s = snap(sym);
         return (
@@ -47,6 +44,7 @@ export default function Sidebar() {
       })}
 
       <div className="side-label">Top Movers</div>
+      {gainers.length === 0 && <div className="dim" style={{ fontSize: 12, padding: '0 8px' }}>Waiting for live/snapshot data…</div>}
       {gainers.map(({ i, s }) => (
         <div key={i.symbol} className="watch-row" onClick={() => navigate(`/stock/${i.symbol}`)}>
           <span className="sym">{i.symbol}</span>
