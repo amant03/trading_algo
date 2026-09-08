@@ -1,7 +1,7 @@
 // Yahoo-backed Indian equity search (NSE + BSE). Complements the local
 // universe.json so names that aren't in the snapshot still resolve.
 
-import { jsonHeaders, stripYahooTicker } from '../src/lib/nse';
+import { jsonHeaders, stripYahooTicker } from './nse';
 
 interface Hit {
   symbol: string;

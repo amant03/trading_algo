@@ -1,7 +1,7 @@
 // Near-live NSE/BSE quotes. Default tape is the top ~120 names by market cap.
 // Pass ?symbols=FOO,BAR to overlay any listed Indian stock on demand.
 
-import { fetchLiveBundle, jsonHeaders, type IndexQuote, type LiveQuote } from '../src/lib/nse';
+import { fetchLiveBundle, jsonHeaders, type IndexQuote, type LiveQuote } from './nse';
 
 const TTL_MS = 12_000;
 

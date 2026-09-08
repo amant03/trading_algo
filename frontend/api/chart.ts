@@ -1,7 +1,7 @@
 // OHLCV chart relay for the static deploy. Mirrors Google Finance ranges
 // (1D defaults to 1-minute bars during the NSE cash session).
 
-import { RANGES, fetchChart, jsonHeaders, type OHLCV } from '../src/lib/nse';
+import { RANGES, fetchChart, jsonHeaders, type OHLCV } from './nse';
 
 const TTL_MS = 20_000;
 const cache: Record<string, { at: number; rows: OHLCV[] }> = {};
