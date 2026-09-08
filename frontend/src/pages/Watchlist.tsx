@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useLive } from '../ws';
+import { useLive, refreshSymbols } from '../ws';
 import { fmt, fmtPct, cls } from '../format';
 import { useToast } from '../components/Toasts';
 import type { Instrument } from '../types';
@@ -10,6 +10,7 @@ export default function Watchlist() {
   const toast = useToast();
   const snapshots = useLive((s) => s.snapshots);
   const instruments = useLive((s) => s.instruments);
+  const universe = useLive((s) => s.universe);
   const fundamentals = useLive((s) => s.fundamentals);
   const watchlist = useLive((s) => s.watchlist);
   const toggleWatch = useLive((s) => s.toggleWatch);
@@ -19,6 +20,18 @@ export default function Watchlist() {
   // before the snapshot lands
   const all = useMemo(() => {
     const map = new Map<string, Instrument>();
+    for (const u of universe) {
+      map.set(u.symbol, {
+        id: 0,
+        symbol: u.symbol,
+        name: u.name,
+        sector: `${u.exchange} · ${u.cap}`,
+        isin: u.isin,
+        exchange: u.exchange,
+        marketCap: u.mktCap ?? 0,
+        basePrice: 0,
+      });
+    }
     for (const i of instruments) map.set(i.symbol, i);
     for (const sym of Object.keys(fundamentals)) {
       const f = fundamentals[sym];
@@ -42,16 +55,16 @@ export default function Watchlist() {
       }
     }
     return [...map.values()].sort((a, b) => a.symbol.localeCompare(b.symbol));
-  }, [instruments, fundamentals, snapshots]);
+  }, [instruments, universe, fundamentals, snapshots]);
 
   const add = () => {
     const sym = addSymbol.trim().toUpperCase();
     if (!sym) return;
-    const known = all.some((i) => i.symbol === sym);
-    if (!known) {
-      toast(`Unknown symbol "${sym}" — try the search to find a valid stock`, 'err');
+    if (!/^[A-Z0-9][A-Z0-9&-]{0,19}$/.test(sym)) {
+      toast(`"${sym}" is not a valid ticker`, 'err');
       return;
     }
+    void refreshSymbols([sym]);
     if (toggleWatch(sym)) toast(`Added ${sym} to watchlist`, 'ok');
     else toast(`${sym} was already in the watchlist`, 'ok');
     setAddSymbol('');
@@ -76,7 +89,10 @@ export default function Watchlist() {
     })
     .sort((a, b) => a.symbol.localeCompare(b.symbol));
 
-  const filtered = all.filter((i) => !watchlist.includes(i.symbol));
+  const filtered = all
+    .filter((i) => !watchlist.includes(i.symbol))
+    .filter((i) => !addSymbol || i.symbol.startsWith(addSymbol) || i.name.toUpperCase().includes(addSymbol))
+    .slice(0, 40);
 
   return (
     <div>

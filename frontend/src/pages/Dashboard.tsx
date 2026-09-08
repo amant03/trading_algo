@@ -57,9 +57,6 @@ export default function Dashboard() {
 
   useEffect(() => {
     setInstruments(storeInstruments);
-    get<Instrument[]>('/api/instruments')
-      .then((rows) => rows.length && setInstruments(rows))
-      .catch(() => {});
   }, [storeInstruments]);
 
   const live = useMemo(() => {
@@ -97,7 +94,7 @@ export default function Dashboard() {
     <div>
       <h1 style={{ marginBottom: 4 }}>Market Dashboard</h1>
       <p className="muted" style={{ marginBottom: 20, fontSize: 13 }}>
-        Real NSE (National Stock Exchange) data — quotes, signals and fills across all strategies.
+        Search 5,000+ NSE &amp; BSE listed stocks. Live tape tracks the most liquid names; open any ticker from search.
       </p>
       <SnapshotMeta />
 
@@ -123,7 +120,7 @@ export default function Dashboard() {
             <span style={{ display: 'inline-block', width: 130, height: 5, background: 'rgba(255,255,255,0.06)', borderRadius: 3, overflow: 'hidden' }}>
               <span style={{ display: 'block', width: `${breadth}%`, height: '100%', background: 'linear-gradient(90deg,var(--down),var(--amber),var(--up))' }} />
             </span>
-            <span className="dim">{total} stocks</span>
+            <span className="dim">{total} liquid names</span>
           </div>
         </div>
         <div className="stat-card reveal reveal-2">

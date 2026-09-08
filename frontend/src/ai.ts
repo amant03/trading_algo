@@ -97,8 +97,8 @@ export function computeTech(rows: HistoryRow[]): TechComputation | null {
   const macdCrossUp = macdLine != null && macdSig != null && macdPrev != null && macdSigPrev != null && macdLine > macdSig && macdPrev <= macdSigPrev;
 
   const st = stochastic(rows, 14, 3, 3);
-  const stK = last(st.k);
-  const stD = last(st.d);
+  const stK = lastValid(st.k);
+  const stD = lastValid(st.d);
 
   const a = atr(rows, 14);
   const atrVal = lastValid(a);
@@ -142,7 +142,7 @@ export function computeTech(rows: HistoryRow[]): TechComputation | null {
     if (bbPctB > 105) signals.push({ label: 'Bands', detail: `Price ${fmtPct(bbPctB)} above the upper Bollinger band — stretched, mean-reversion candidate.`, bias: 'bearish' });
     else if (bbPctB < -5) signals.push({ label: 'Bands', detail: `Price ${fmtPct(bbPctB)} below the lower Bollinger band — stretched low, bounce candidate.`, bias: 'bullish' });
   }
-  if (volRatio > 1.5) signals.push({ label: 'Volume', detail: `Last bar at ${volRatio.toFixed(1)}× the 20-bar average — heavy participation (breakout fuel or climax).`, bias: stK != null && stK > stD ? 'bullish' : 'bearish' });
+  if (volRatio > 1.5) signals.push({ label: 'Volume', detail: `Last bar at ${volRatio.toFixed(1)}× the 20-bar average — heavy participation (breakout fuel or climax).`, bias: stK != null && stD != null && stK > stD ? 'bullish' : 'bearish' });
   if (Math.abs(gapPct) > 0.8) signals.push({ label: 'Gap', detail: `${gapPct >= 0 ? 'Opening' : 'Gapping down'} ${fmtPct(Math.abs(gapPct))} from the prior close.`, bias: gapPct >= 0 ? 'bullish' : 'bearish' });
   if (stK != null && stD != null) {
     signals.push({

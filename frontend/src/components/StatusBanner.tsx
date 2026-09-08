@@ -36,8 +36,7 @@ export default function StatusBanner() {
       )}
       {mode === 'offline' && (
         <span>
-          Backend unreachable and no snapshot available yet. Start the stack locally with
-          <code>npm run start:all</code> — or wait for the next automation run to publish one.
+          Connecting to NSE quotes and the latest snapshot&hellip; if this stays here, the live relay is still warming up.
         </span>
       )}
     </div>

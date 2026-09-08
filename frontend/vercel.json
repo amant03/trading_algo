@@ -1,14 +1,17 @@
 {
+  "cleanUrls": false,
+  "trailingSlash": false,
   "rewrites": [
+    { "source": "/universe.json", "destination": "/universe.json" },
+    { "source": "/snapshot.json", "destination": "/snapshot.json" },
+    { "source": "/analysis.json", "destination": "/analysis.json" },
+    { "source": "/news.json", "destination": "/news.json" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ],
   "functions": {
-    "api/live.ts": {
-      "maxDuration": 30
-    },
-    "api/chart.ts": {
-      "maxDuration": 30
-    }
+    "api/live.ts": { "maxDuration": 30 },
+    "api/chart.ts": { "maxDuration": 30 },
+    "api/search.ts": { "maxDuration": 15 }
   },
   "headers": [
     {
@@ -18,6 +21,10 @@
     {
       "source": "/index.html",
       "headers": [{ "key": "Cache-Control", "value": "no-cache, must-revalidate" }]
+    },
+    {
+      "source": "/universe.json",
+      "headers": [{ "key": "Cache-Control", "value": "public, max-age=3600" }]
     },
     {
       "source": "/snapshot.json",

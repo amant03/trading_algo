@@ -9,6 +9,16 @@ export interface Instrument {
   basePrice: number;
 }
 
+export interface UniverseStock {
+  symbol: string;
+  name: string;
+  exchange: 'NSE' | 'BSE';
+  series: string;
+  isin: string;
+  cap: 'large' | 'mid' | 'small';
+  mktCap: number | null;
+}
+
 export interface Snapshot {
   instrumentId: number;
   symbol: string;

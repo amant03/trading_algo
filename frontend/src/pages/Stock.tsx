@@ -1,7 +1,7 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { get } from '../api';
-import { useLive } from '../ws';
+import { useLive, refreshSymbols } from '../ws';
 import { fmt, fmtPct, fmtCompact, fmtMoney, cls } from '../format';
 import { useToast } from '../components/Toasts';
 import { DirectionBadge, GradeBadge } from '../components/Badge';
@@ -24,6 +24,7 @@ import {
   macdBias,
   trendBias,
 } from '../indicators';
+import { computeTech } from '../ai';
 import type {
   Instrument,
   Snapshot,
@@ -35,6 +36,7 @@ import type {
   HistoryRow,
   MgmtAnalysis,
   LegalCase,
+  PeerInfo,
 } from '../types';
 
 type Tab = 'overview' | 'fundamentals' | 'technical' | 'news' | 'ai';
@@ -54,34 +56,6 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'ai', label: 'AI Analyst', icon: '✦' },
   { id: 'news', label: 'News', icon: '✉' },
 ];
-
-function SparklineChart({ points, height = 180 }: { points: [number, number][]; height?: number }) {
-  const w = 640;
-  const h = height;
-  const pad = 8;
-  if (points.length < 2) return <div className="empty" style={{ height }}>No price history.</div>;
-  const min = Math.min(...points.map((p) => p[1]));
-  const max = Math.max(...points.map((p) => p[1]));
-  const span = max - min || 1;
-  const x = (i: number) => pad + (i / (points.length - 1)) * (w - pad * 2);
-  const y = (v: number) => h - pad - ((v - min) / span) * (h - pad * 2);
-  const path = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(p[1]).toFixed(1)}`).join(' ');
-  const area = `${path} L${x(points.length - 1).toFixed(1)},${h - pad} L${x(0).toFixed(1)},${h - pad} Z`;
-  const up = points[points.length - 1][1] >= points[0][1];
-  const color = up ? 'var(--up)' : 'var(--down)';
-  return (
-    <svg viewBox={`0 0 ${w} ${h}`} style={{ width: '100%', height }} preserveAspectRatio="none">
-      <defs>
-        <linearGradient id="spark-grad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.25" />
-          <stop offset="100%" stopColor={color} stopOpacity="0.02" />
-        </linearGradient>
-      </defs>
-      <path d={area} fill="url(#spark-grad)" />
-      <path d={path} fill="none" stroke={color} strokeWidth="2" />
-    </svg>
-  );
-}
 
 function VerdictBar({ mid, low, high, price }: { mid: number; low: number; high: number; price: number }) {
   const lo = Math.min(low, high, mid, price) - 1;
@@ -415,44 +389,51 @@ export default function Stock() {
 
   const snapshots = useLive((s) => s.snapshots);
   const storeInstruments = useLive((s) => s.instruments);
+  const universe = useLive((s) => s.universe);
   const fundamentals = useLive((s) => s.fundamentals);
   const newsBySymbol = useLive((s) => s.newsBySymbol);
   const watchlist = useLive((s) => s.watchlist);
-  const sparklines = useLive((s) => s.sparklines);
 
   const [instrument, setInstrument] = useState<Instrument | null>(null);
   const [tab, setTab] = useState<Tab>('overview');
   const [signals, setSignals] = useState<Signal[]>([]);
   const [stockNews, setStockNews] = useState<NewsItem[]>([]);
   const [stockNewsArt, setStockNewsArt] = useState<NewsArticle[]>([]);
+  const [ovRange, setOvRange] = useState<AdvRangeId>('1d');
   const [dayRows, setDayRows] = useState<HistoryRow[]>([]);
   const [dayLoading, setDayLoading] = useState(true);
   const [aiPrompt, setAiPrompt] = useState<string | null>(null);
 
   const snap: Snapshot | undefined = snapshots[upper];
   const analysis: StockAnalysis | undefined = fundamentals[upper];
-  const spark: [number, number][] = sparklines[upper] ?? [];
   const watch = watchlist.includes(upper);
 
   useEffect(() => {
     setInstrument((prev) => {
-      if (prev?.symbol === upper) return prev;
       const fromStore = storeInstruments.find((i) => i.symbol === upper);
       if (fromStore) return fromStore;
-      const a = useLive.getState().fundamentals[upper];
+      const a = fundamentals[upper];
       if (a) return { id: 0, symbol: upper, name: a.name ?? upper, sector: a.sector ?? '', isin: '', exchange: 'NSE', marketCap: a.marketCap ?? 0, basePrice: a.price };
-      const s = useLive.getState().snapshots[upper];
-      if (s) return { id: 0, symbol: upper, name: upper, sector: 'NSE', isin: '', exchange: 'NSE', marketCap: 0, basePrice: s.price };
+      const s = snapshots[upper];
+      const fromUni = universe.find((u) => u.symbol === upper);
+      if (fromUni) {
+        return { id: 0, symbol: upper, name: fromUni.name, sector: `${fromUni.exchange} · ${fromUni.cap}`, isin: fromUni.isin, exchange: fromUni.exchange, marketCap: fromUni.mktCap ?? 0, basePrice: s?.price ?? 0 };
+      }
+      if (/^[A-Z0-9][A-Z0-9&-]{0,19}$/.test(upper)) {
+        return { id: 0, symbol: upper, name: upper, sector: 'NSE/BSE', isin: '', exchange: 'NSE', marketCap: 0, basePrice: s?.price ?? 0 };
+      }
       return prev;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [upper, storeInstruments, snapshots, fundamentals]);
+  }, [upper, storeInstruments, snapshots, fundamentals, universe]);
 
   useEffect(() => {
     setSignals([]);
     setStockNews([]);
     setStockNewsArt([]);
     setTab('overview');
+    setOvRange('1d');
+    setDayRows([]);
+    void refreshSymbols([upper]);
 
     get<Signal[]>(`/api/instruments/${upper}/signals?limit=30`)
       .then(setSignals)
@@ -471,7 +452,7 @@ export default function Stock() {
   useEffect(() => {
     let live = true;
     setDayLoading(true);
-    get<{ rows: HistoryRow[] }>(`/api/chart?symbol=${encodeURIComponent(upper)}&range=1d`)
+    get<{ rows: HistoryRow[] }>(`/api/chart?symbol=${encodeURIComponent(upper)}&range=${ovRange}`)
       .then((r) => {
         if (live) setDayRows(Array.isArray(r.rows) ? r.rows : []);
       })
@@ -484,17 +465,18 @@ export default function Stock() {
     return () => {
       live = false;
     };
-  }, [upper]);
+  }, [upper, ovRange]);
 
   const changePct = snap?.changePct;
+  const tech = useMemo(() => computeTech(dayRows), [dayRows]);
 
   const toggleWatch = () => {
     const added = useLive.getState().toggleWatch(upper);
     toast(added ? `Added ${upper} to watchlist` : `Removed ${upper} from watchlist`, 'ok');
   };
 
-  if (!instrument && !snap && !analysis) {
-    return <div className="empty">Instrument {upper} not found.</div>;
+  if (!instrument) {
+    return <div className="empty">Instrument {upper} is not a listed NSE/BSE ticker.</div>;
   }
 
   const name = instrument?.name ?? analysis?.name ?? upper;
@@ -502,6 +484,13 @@ export default function Stock() {
   const verdict = analysis?.verdict;
   const mgmt = analysis?.management ?? null;
   const livePrice = snap?.price ?? analysis?.price;
+  const ltStance = analysis?.opinion?.stance ?? (verdict ? (verdict.rating.includes('Buy') ? 'BUY' : verdict.rating.includes('Sell') ? 'SELL' : 'HOLD') : null);
+  const peerList: PeerInfo[] = analysis?.peers?.length
+    ? analysis.peers
+    : (storeInstruments.length ? storeInstruments : universe.map((u, i) => ({ id: i, symbol: u.symbol, name: u.name, sector: `${u.exchange} · ${u.cap}`, isin: u.isin, exchange: u.exchange, marketCap: u.mktCap ?? 0, basePrice: 0 })))
+        .filter((i) => i.symbol !== upper && i.sector && sector && i.sector === sector)
+        .slice(0, 8)
+        .map((i) => ({ symbol: i.symbol, name: i.name, industry: null, sector: i.sector }));
 
   return (
     <div>
@@ -548,28 +537,33 @@ export default function Stock() {
                 <h3>Price history</h3>
                 <span className="hint">
                   {dayRows.length > 1
-                    ? '1D intraday · real NSE OHLC'
+                    ? `${ovRange.toUpperCase()} · real NSE · IST`
                     : dayLoading
-                      ? 'loading today…'
-                      : `last ${Math.max(spark.length, 1)} daily closes`}
+                      ? 'loading candles…'
+                      : 'chart feed unavailable — retry in a moment'}
                 </span>
               </div>
               {dayRows.length > 1 ? (
-                <AdvChart symbol={upper} rows={dayRows} livePrice={livePrice} range="1d" />
+                <AdvChart symbol={upper} rows={dayRows} livePrice={livePrice} range={ovRange} onRangeChange={setOvRange} />
               ) : dayLoading ? (
                 <div className="empty" style={{ minHeight: 330, display: 'grid', placeItems: 'center' }}>
                   <div>
                     <div style={{ fontSize: 22, marginBottom: 8 }}>▤</div>
-                    Loading today's candles…
+                    Loading {ovRange.toUpperCase()} candles…
                   </div>
                 </div>
-              ) : spark.length > 1 ? (
-                <SparklineChart points={spark} height={330} />
               ) : (
                 <div className="empty" style={{ minHeight: 330, display: 'grid', placeItems: 'center' }}>
                   <div>
                     <div style={{ fontSize: 22, marginBottom: 8 }}>▤</div>
-                    Open the <b>Technical</b> tab for the full OHLC chart.
+                    No candles for {ovRange.toUpperCase()} yet. Open Technical or pick another range.
+                    <div style={{ marginTop: 10 }}>
+                      <div className="range-tabs" style={{ justifyContent: 'center' }}>
+                        {(['1d', '5d', '1mo', '6mo', '1y', '5y'] as AdvRangeId[]).map((r) => (
+                          <button key={r} className={ovRange === r ? 'active' : ''} onClick={() => setOvRange(r)}>{r.toUpperCase()}</button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
@@ -590,6 +584,22 @@ export default function Stock() {
                   </div>
                   <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.55, marginBottom: 6 }}>{verdict?.summary}</div>
                   {verdict && <VerdictBar mid={verdict.fairValueMid} low={verdict.fairValueLow} high={verdict.fairValueHigh} price={analysis.price} />}
+                  <div className="dual-verdict">
+                    <div className="dv-card">
+                      <div className="dv-k">Technical (short-term)</div>
+                      <div className="dv-v" style={{ color: tech?.verdict.stance === 'BUY' ? 'var(--up)' : tech?.verdict.stance === 'SELL' ? 'var(--down)' : 'var(--amber)' }}>
+                        {tech ? `${tech.verdict.stance} · ${tech.verdict.trend}` : 'loading…'}
+                      </div>
+                      <div className="dv-why">{tech?.verdict.why[0] ?? 'Waiting on 1D candles for breakout / trend read.'}</div>
+                    </div>
+                    <div className="dv-card">
+                      <div className="dv-k">Fundamental (3–5y)</div>
+                      <div className="dv-v" style={{ color: ltStance === 'BUY' ? 'var(--up)' : ltStance === 'SELL' ? 'var(--down)' : 'var(--amber)' }}>
+                        {ltStance ?? 'pending'}{analysis?.opinion ? ` · ${analysis.opinion.conviction}%` : verdict ? ` · ${verdict.score}/100` : ''}
+                      </div>
+                      <div className="dv-why">{analysis?.opinion?.thesis ?? verdict?.summary ?? 'Long-term screen pending.'}</div>
+                    </div>
+                  </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10 }}>
                     <ScreenInline grade={analysis.screens.buffett.grade} label="Buffett" score={analysis.screens.buffett.score} />
                     <ScreenInline grade={analysis.screens.lynch.grade} label="Lynch" score={analysis.screens.lynch.score} />
@@ -639,8 +649,8 @@ export default function Stock() {
             </div>
           </div>
 
-          <CompetitionPanel symbol={upper} peers={analysis?.peers ?? []} onContext={setAiPrompt} />
-          <ReportsPanel reports={analysis?.reports ?? null} />
+          <CompetitionPanel symbol={upper} peers={peerList} onContext={(q) => { setAiPrompt(q); setTab('ai'); }} />
+          <ReportsPanel symbol={upper} name={name} reports={analysis?.reports ?? null} />
         </div>
       )}
 
@@ -745,6 +755,10 @@ export default function Stock() {
             </div>
           )}
         </div>
+      )}
+
+      {tab === 'ai' && (
+        <AIAnalyst upper={upper} prompt={aiPrompt} onPromptConsumed={() => setAiPrompt(null)} />
       )}
 
       {tab === 'news' && (

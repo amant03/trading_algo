@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { get, post, del } from './api';
-import type { Snapshot, Signal, NewsItem, NewsArticle, Order, Trade, MarketOverview, Instrument, StockAnalysis, Sparkline } from './types';
+import { NSE_UNIVERSE } from './lib/nse';
+import type { Snapshot, Signal, NewsItem, NewsArticle, Order, Trade, MarketOverview, Instrument, StockAnalysis, Sparkline, UniverseStock } from './types';
 
 export interface LiveCandle {
   instrumentId: number;
@@ -28,6 +29,7 @@ interface LiveState {
   orders: Order[];
   trades: Trade[];
   instruments: Instrument[];
+  universe: UniverseStock[];
   snapshotAt: number | null;
   fundamentals: Record<string, StockAnalysis>;
   sparklines: Record<string, Sparkline>;
@@ -38,6 +40,7 @@ interface LiveState {
   touch: () => void;
   setOverview: (o: MarketOverview | null) => void;
   setInstruments: (items: Instrument[]) => void;
+  setUniverse: (items: UniverseStock[]) => void;
   setSnapshotAt: (t: number | null) => void;
   setAnalysis: (f: Record<string, StockAnalysis>, s: Record<string, Sparkline>) => void;
   setNewsBySymbol: (rec: Record<string, NewsArticle[]>) => void;
@@ -56,7 +59,7 @@ interface LiveState {
 let socket: WebSocket | null = null;
 let retry = 0;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
-let relayTimer: ReturnType<typeof setInterval> | null = null;
+let relayTimer: ReturnType<typeof setTimeout> | null = null;
 let snapshotTimer: ReturnType<typeof setInterval> | null = null;
 
 // ---- persistent watchlist (works on the static deploy with no backend) ----
@@ -109,6 +112,7 @@ export const useLive = create<LiveState>((set, get) => ({
   orders: [],
   trades: [],
   instruments: [],
+  universe: [],
   snapshotAt: null,
   fundamentals: {},
   sparklines: {},
@@ -119,6 +123,7 @@ export const useLive = create<LiveState>((set, get) => ({
   touch: () => set({ lastEventAt: Date.now() }),
   setOverview: (o) => set({ overview: o }),
   setInstruments: (items) => set({ instruments: items }),
+  setUniverse: (items) => set({ universe: items }),
   setSnapshotAt: (t) => set({ snapshotAt: t }),
   setAnalysis: (f, s) => set((st) => ({ fundamentals: { ...st.fundamentals, ...f }, sparklines: { ...st.sparklines, ...s } })),
   setNewsBySymbol: (rec) => set((st) => ({ newsBySymbol: { ...st.newsBySymbol, ...rec } })),
@@ -163,9 +168,12 @@ interface QuoteLike {
   symbol?: string | null;
   price?: number | null;
   changePct?: number | null;
+  change?: number | null;
+  prevClose?: number | null;
   dayHigh?: number | null;
   dayLow?: number | null;
   dayVolume?: number | null;
+  volume?: number | null;
   basePrice?: number | null;
 }
 
@@ -177,17 +185,19 @@ function quotesToSnapshots(list: QuoteLike[]): Snapshot[] {
     .map((q) => {
       const price = Number(q.price ?? q.basePrice ?? 0);
       const changePct = Number(q.changePct ?? 0);
+      const prevClose = Number(q.prevClose ?? (price - price * (changePct / 100)));
+      const change = Number(q.change ?? price - prevClose);
       return {
         instrumentId: 0,
         symbol: String(q.symbol),
         price,
-        prevClose: price - price * (changePct / 100),
-        change: price * (changePct / 100),
+        prevClose,
+        change,
         changePct,
-        dayOpen: price - price * (changePct / 100),
+        dayOpen: prevClose,
         dayHigh: Number(q.dayHigh ?? price),
         dayLow: Number(q.dayLow ?? price),
-        dayVolume: Number(q.dayVolume ?? 0),
+        dayVolume: Number(q.dayVolume ?? q.volume ?? 0),
         ts: now,
       } satisfies Snapshot;
     });
@@ -223,7 +233,7 @@ async function pollOnce(): Promise<boolean> {
     const live = useLive.getState();
     if (quotes.length) {
       live.updateSnapshots(quotesToSnapshots(quotes));
-      live.setInstruments(toInstruments(quotes));
+      applyQuoteInstruments(toInstruments(quotes));
     }
     if (overview) live.setOverview(overview);
     if (sigs && !live.signals.length) live.replaceSignals(sigs);
@@ -256,45 +266,175 @@ function stopPolling(): void {
   }
 }
 
+const CAP_LABEL: Record<string, string> = { large: 'Large cap', mid: 'Mid cap', small: 'Small cap' };
+
+function universeToInstruments(stocks: UniverseStock[]): Instrument[] {
+  return stocks.map((u, i) => ({
+    id: i + 1,
+    symbol: u.symbol,
+    name: u.name,
+    sector: CAP_LABEL[u.cap] ?? u.cap,
+    isin: u.isin,
+    exchange: u.exchange,
+    marketCap: u.mktCap ?? 0,
+    basePrice: 0,
+  }));
+}
+
+function applyQuoteInstruments(incoming: Instrument[]): void {
+  if (!incoming.length) return;
+  const live = useLive.getState();
+  if (!live.instruments.length) {
+    live.setInstruments(incoming);
+    return;
+  }
+  const have = new Set(live.instruments.map((i) => i.symbol));
+  const extra = incoming.filter((i) => !have.has(i.symbol));
+  if (extra.length) live.setInstruments([...live.instruments, ...extra]);
+}
+
+function seedInstrumentsIfEmpty(): void {
+  const live = useLive.getState();
+  if (live.instruments.length || live.universe.length) return;
+  live.setInstruments(
+    NSE_UNIVERSE.map((u, i) => ({
+      id: i + 1,
+      symbol: u.symbol,
+      name: u.name,
+      sector: u.sector,
+      isin: '',
+      exchange: 'NSE',
+      marketCap: 0,
+      basePrice: 0,
+    })),
+  );
+}
+
+const UNIVERSE_URLS = [
+  '/universe.json',
+  'https://cdn.jsdelivr.net/gh/amant03/trading_algo@main/frontend/public/universe.json',
+  'https://raw.githubusercontent.com/amant03/trading_algo/main/frontend/public/universe.json',
+];
+
+async function loadUniverse(): Promise<boolean> {
+  const data = await loadJson<{ stocks?: UniverseStock[] }>(UNIVERSE_URLS);
+  if (!data?.stocks?.length) return false;
+  const live = useLive.getState();
+  live.setUniverse(data.stocks);
+  live.setInstruments(universeToInstruments(data.stocks));
+  return true;
+}
+
+export async function refreshSymbols(symbols: string[]): Promise<void> {
+  const extra = [...new Set(symbols.map((s) => s.trim().toUpperCase()).filter(Boolean))].slice(0, 24);
+  if (!extra.length) return;
+  try {
+    const res = await fetch(`/api/live?symbols=${encodeURIComponent(extra.join(','))}`, { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = (await res.json()) as { ts: number; quotes: QuoteLike[]; index?: { symbol: string; price: number; changePct: number; timestamp?: number } | null };
+    if (!data.quotes?.length) return;
+    const live = useLive.getState();
+    live.updateSnapshots(quotesToSnapshots(data.quotes));
+    live.touch();
+  } catch {
+    // ignore — chart/page still work off /api/chart
+  }
+}
+
+function overviewFromQuotes(quotes: QuoteLike[], ts: number, index?: { symbol: string; price: number; changePct: number; timestamp?: number } | null): MarketOverview {
+  const snaps = quotesToSnapshots(quotes);
+  const adv = snaps.filter((s) => s.changePct > 0.02).length;
+  const dec = snaps.filter((s) => s.changePct < -0.02).length;
+  const unchanged = snaps.length - adv - dec;
+  const bySector = new Map<string, number[]>();
+  for (const q of quotes) {
+    const sector = String(q.sector ?? '');
+    if (!sector) continue;
+    const arr = bySector.get(sector) ?? [];
+    arr.push(Number(q.changePct ?? 0));
+    bySector.set(sector, arr);
+  }
+  const sectorPerformance = [...bySector.entries()]
+    .map(([sector, vals]) => ({
+      sector,
+      changePct: vals.reduce((a, b) => a + b, 0) / vals.length,
+      count: vals.length,
+    }))
+    .sort((a, b) => b.changePct - a.changePct);
+  const ranked = [...snaps].sort((a, b) => b.changePct - a.changePct);
+  const byVol = [...snaps].sort((a, b) => b.dayVolume - a.dayVolume);
+  const idx = index && index.price > 0
+    ? { symbol: index.symbol || 'NIFTY 50', price: index.price, changePct: index.changePct, timestamp: index.timestamp ?? ts }
+    : { symbol: 'NIFTY 50', price: 0, changePct: 0, timestamp: ts };
+  return {
+    index: idx,
+    market: { advancers: adv, decliners: dec, unchanged, total: snaps.length },
+    sectorPerformance,
+    gainers: ranked.slice(0, 10),
+    losers: [...ranked].reverse().slice(0, 10),
+    topVolume: byVol.slice(0, 10),
+    updatedAt: ts,
+  };
+}
+
+function isIstSessionNow(): boolean {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date());
+  const wd = parts.find((p) => p.type === 'weekday')?.value ?? '';
+  if (wd === 'Sat' || wd === 'Sun') return false;
+  const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? 0);
+  const minute = Number(parts.find((p) => p.type === 'minute')?.value ?? 0);
+  const hm = hour * 60 + minute;
+  return hm >= 9 * 60 && hm <= 15 * 60 + 40;
+}
+
 function startRelay(): void {
   if (relayTimer) return;
-  // Near-live quotes keep coming even on the static deploy (no backend): the
-  // /api/live serverless function proxies Yahoo and we overlay the prices.
+  seedInstrumentsIfEmpty();
   const tick = async () => {
     const st = useLive.getState();
     if (st.mode === 'live') return;
     try {
       const res = await fetch('/api/live', { cache: 'no-store' });
       if (!res.ok) throw new Error(`relay ${res.status}`);
-      const data = (await res.json()) as { ts: number; quotes: QuoteLike[] };
+      const data = (await res.json()) as {
+        ts: number;
+        quotes: QuoteLike[];
+        index?: { symbol: string; price: number; changePct: number; timestamp?: number } | null;
+      };
       if (!data.quotes?.length) throw new Error('no quotes');
       const live = useLive.getState();
-      const hasSnaps = Object.keys(live.snapshots).length > 0;
       live.updateSnapshots(quotesToSnapshots(data.quotes));
-      if (!hasSnaps) live.setInstruments(toInstruments(data.quotes));
+      applyQuoteInstruments(toInstruments(data.quotes));
       live.touch();
-      if (live.mode === 'snapshot' || live.mode === 'relay') {
-        const ov = live.overview;
-        live.setOverview(
-          ov
-            ? { ...ov, updatedAt: data.ts }
-            : { index: { symbol: 'NIFTY 50', price: 0, changePct: 0, timestamp: data.ts }, market: { advancers: 0, decliners: 0, unchanged: 0, total: 0 }, sectorPerformance: [], gainers: [], losers: [], topVolume: [], updatedAt: data.ts },
-        );
-        live.setSnapshotAt(data.ts);
-        live.setMode('relay');
-      }
+      live.setOverview(overviewFromQuotes(data.quotes, data.ts, data.index));
+      live.setSnapshotAt(data.ts);
+      if (live.mode !== 'live') live.setMode('relay');
+      const watched = useLive.getState().watchlist;
+      if (watched.length) void refreshSymbols(watched);
     } catch {
       const live = useLive.getState();
-      if (live.mode === 'relay') live.setMode('snapshot');
+      if (live.mode === 'relay' && Object.keys(live.snapshots).length) live.setMode('snapshot');
     }
   };
   void tick();
-  relayTimer = setInterval(tick, 15_000);
+  const cadence = () => (isIstSessionNow() ? 8_000 : 25_000);
+  const loop = () => {
+    relayTimer = setTimeout(() => {
+      void tick().finally(loop);
+    }, cadence());
+  };
+  loop();
 }
 
 function stopRelay(): void {
   if (relayTimer) {
-    clearInterval(relayTimer);
+    clearTimeout(relayTimer);
     relayTimer = null;
   }
 }
@@ -303,88 +443,81 @@ function stopRelay(): void {
  *  branch on every run (fetched live, no redeploy needed); the bundle also
  *  ships frontend/public/snapshot.json as a second fallback. */
 const SNAPSHOT_URLS = [
-  'https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/snapshot.json',
   '/snapshot.json',
+  'https://cdn.jsdelivr.net/gh/amant03/trading_algo@automation-data/frontend/public/snapshot.json',
+  'https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/snapshot.json',
+  'https://cdn.jsdelivr.net/gh/amant03/trading_algo@main/frontend/public/snapshot.json',
 ];
 
 const ANALYSIS_URLS = [
-  'https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/analysis.json',
   '/analysis.json',
+  'https://cdn.jsdelivr.net/gh/amant03/trading_algo@automation-data/frontend/public/analysis.json',
+  'https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/analysis.json',
 ];
 
 const NEWS_URLS = [
-  'https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/news.json',
   '/news.json',
+  'https://cdn.jsdelivr.net/gh/amant03/trading_algo@automation-data/frontend/public/news.json',
+  'https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/news.json',
 ];
 
-async function loadNews(): Promise<boolean> {
-  for (const url of NEWS_URLS) {
+async function loadJson<T>(urls: string[]): Promise<T | null> {
+  for (const url of urls) {
     try {
       const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) continue;
-      const data = (await res.json()) as { generatedAt?: string; items?: Record<string, NewsArticle[]> };
-      if (!data.items) continue;
-      useLive.getState().setNewsBySymbol(data.items);
-      return true;
+      const ct = res.headers.get('content-type') ?? '';
+      if (ct.includes('text/html')) continue;
+      const data = (await res.json()) as T;
+      if (data && typeof data === 'object') return data;
     } catch {
       continue;
     }
   }
-  return false;
+  return null;
+}
+
+async function loadNews(): Promise<boolean> {
+  const data = await loadJson<{ generatedAt?: string; items?: Record<string, NewsArticle[]> }>(NEWS_URLS);
+  if (!data?.items) return false;
+  useLive.getState().setNewsBySymbol(data.items);
+  return true;
 }
 
 async function loadAnalysis(): Promise<boolean> {
-  for (const url of ANALYSIS_URLS) {
-    try {
-      const res = await fetch(url, { cache: 'no-store' });
-      if (!res.ok) continue;
-      const data = (await res.json()) as {
-        stocks?: Record<string, StockAnalysis>;
-        sparklines?: Record<string, Sparkline>;
-      };
-      if (!data.stocks) continue;
-      useLive.getState().setAnalysis(data.stocks, data.sparklines ?? {});
-      return true;
-    } catch {
-      continue;
-    }
-  }
-  return false;
+  const data = await loadJson<{
+    stocks?: Record<string, StockAnalysis>;
+    sparklines?: Record<string, Sparkline>;
+  }>(ANALYSIS_URLS);
+  if (!data?.stocks) return false;
+  useLive.getState().setAnalysis(data.stocks, data.sparklines ?? {});
+  return true;
 }
 
 async function loadCiSnapshot(): Promise<boolean> {
-  for (const url of SNAPSHOT_URLS) {
-    try {
-      const snap = await fetch(url, { cache: 'no-store' });
-      if (!snap.ok) continue;
-      const data = (await snap.json()) as {
-        generatedAt?: string;
-        overview?: MarketOverview | null;
-        instruments?: Array<Record<string, unknown> & QuoteLike> | null;
-        signals?: Signal[] | null;
-        news?: NewsItem[] | null;
-      };
-      const viable = data.instruments?.length || data.signals?.length || data.news?.length;
-      if (!viable) continue;
-      const live = useLive.getState();
-      if (data.instruments?.length) {
-        live.updateSnapshots(quotesToSnapshots(data.instruments));
-        live.setInstruments(toInstruments(data.instruments));
-      }
-      if (data.overview) live.setOverview(data.overview);
-      if (data.signals?.length) live.replaceSignals(data.signals);
-      if (data.news?.length) live.replaceNews(data.news);
-      if (data.generatedAt) live.setSnapshotAt(new Date(data.generatedAt).getTime());
-      if (live.mode === 'offline') live.setMode('snapshot');
-      void loadAnalysis();
-      void loadNews();
-      startRelay();
-      return true;
-    } catch {
-      continue;
-    }
+  const data = await loadJson<{
+    generatedAt?: string;
+    overview?: MarketOverview | null;
+    instruments?: Array<Record<string, unknown> & QuoteLike> | null;
+    signals?: Signal[] | null;
+    news?: NewsItem[] | null;
+  }>(SNAPSHOT_URLS);
+  if (!data) return false;
+  const viable = data.instruments?.length || data.signals?.length || data.news?.length;
+  if (!viable) return false;
+  const live = useLive.getState();
+  if (data.instruments?.length) {
+    live.updateSnapshots(quotesToSnapshots(data.instruments));
+    applyQuoteInstruments(toInstruments(data.instruments));
   }
-  return false;
+  if (data.overview) live.setOverview(data.overview);
+  if (data.signals?.length) live.replaceSignals(data.signals);
+  if (data.news?.length) live.replaceNews(data.news);
+  if (data.generatedAt) live.setSnapshotAt(new Date(data.generatedAt).getTime());
+  if (live.mode === 'offline') live.setMode('snapshot');
+  void loadAnalysis();
+  void loadNews();
+  return true;
 }
 
 /** Snapshot loading retries every 30s until it lands, so a transient GitHub
@@ -402,13 +535,10 @@ function ensureSnapshot(): void {
 }
 
 export function connectLive() {
-  if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const url = import.meta.env.VITE_WS_URL ?? `${proto}://${location.host}/ws`;
-
-  // No backend reachable at boot? Load the last CI-committed snapshot (and
-  // keep retrying) so the terminal never renders an empty shell.
+  seedInstrumentsIfEmpty();
+  void loadUniverse();
   ensureSnapshot();
+  startRelay();
   void syncWatchlist();
   void loadAnalysis();
   void loadNews();
@@ -416,6 +546,13 @@ export function connectLive() {
     void loadNews();
     void loadAnalysis();
   }, 600_000);
+
+  const staticHost = import.meta.env.PROD && !import.meta.env.VITE_WS_URL;
+  if (staticHost) return;
+
+  if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const url = import.meta.env.VITE_WS_URL ?? `${proto}://${location.host}/ws`;
 
   try {
     socket = new WebSocket(url);

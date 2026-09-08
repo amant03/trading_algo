@@ -98,15 +98,6 @@ type Opinion = {
   risks: string[];
 };
 
-function slugifyCompany(name: string): string {
-  return (name ?? '')
-    .toLowerCase()
-    .replace(/&/g, 'and')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
-}
-
 function buildOpinion(
   m: Metrics,
   verdict: { score: number; marginOfSafety: number; rating: string; fairValueMid: number },
@@ -154,11 +145,9 @@ function buildOpinion(
   return { horizon: 'lt', stance, conviction, thesis: bits.join(' '), risks };
 }
 
-function reportLinks(name: string, quarterEnd: string | null): unknown {
-  const slug = slugifyCompany(name) || 'company';
+function reportLinks(symbol: string, name: string, quarterEnd: string | null): unknown {
   const qSearch = `https://www.google.com/search?q=${encodeURIComponent(`${name} quarterly results`)}`;
   const aSearch = `https://www.google.com/search?q=${encodeURIComponent(`${name} annual report pdf`)}`;
-  const screenerRoot = `https://www.screener.in/company/${slug}/`;
   return {
     quarterly: {
       label: 'Latest quarterly',
@@ -166,7 +155,7 @@ function reportLinks(name: string, quarterEnd: string | null): unknown {
         ? new Date(`${quarterEnd}-01T00:00:00Z`).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })
         : null,
       links: [
-        { label: 'Screener — quarterly financials', url: `${screenerRoot}consolidated/#quarters`, kind: 'financials' },
+        { label: 'Screener — quarterly financials', url: `https://www.screener.in/company/${symbol}/#quarters`, kind: 'financials' },
         { label: 'Search latest quarter results', url: qSearch, kind: 'search' },
       ],
     },
@@ -174,7 +163,7 @@ function reportLinks(name: string, quarterEnd: string | null): unknown {
       label: 'Latest annual',
       period: null,
       links: [
-        { label: 'Screener — annual financials', url: `${screenerRoot}consolidated/`, kind: 'financials' },
+        { label: 'Screener — annual financials', url: `https://www.screener.in/company/${symbol}/`, kind: 'financials' },
         { label: 'Search annual report PDF', url: aSearch, kind: 'search' },
       ],
     },
@@ -679,7 +668,7 @@ async function main(): Promise<void> {
         industry: seedIndustry.get(s) ?? null,
         sector: seedSector.get(s) ?? null,
       }));
-    e.reports = reportLinks(seedName.get(sym) ?? e.name ?? sym, quarterEndPer[sym] ?? null);
+    e.reports = reportLinks(sym, seedName.get(sym) ?? e.name ?? sym, quarterEndPer[sym] ?? null);
   }
 
   const out = {

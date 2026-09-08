@@ -1,140 +1,72 @@
-// Near-live NSE quotes for the static deploy.
-// Proxies Yahoo Finance v8 chart (per-symbol, no auth needed) into a single
-// normalized quote payload. A short in-memory TTL avoids hammering Yahoo when
-// the frontend polls; the same module state carries across warm invocations.
+// Near-live NSE/BSE quotes. Default tape is the top ~120 names by market cap.
+// Pass ?symbols=FOO,BAR to overlay any listed Indian stock on demand.
 
-const SYMBOLS = [
-  'RELIANCE', 'TCS', 'HDFCBANK', 'ICICIBANK', 'INFY', 'ITC', 'BHARTIARTL',
-  'SBIN', 'KOTAKBANK', 'AXISBANK', 'LT', 'HINDUNILVR', 'SUNPHARMA',
-  'BAJFINANCE', 'MARUTI', 'TITAN', 'ASIANPAINT', 'ULTRACEMCO', 'NTPC',
-  'ADANIENT', 'ADANIPORTS', 'POWERGRID', 'ONGC', 'TATAMOTORS', 'TATASTEEL',
-  'JSWSTEEL', 'WIPRO', 'TECHM', 'HCLTECH', 'NESTLEIND', 'M&M', 'TATACONSUM',
-  'BAJAJFINSV', 'HDFCLIFE', 'SBILIFE', 'DRREDDY', 'CIPLA', 'APOLLOHOSP',
-  'GRASIM', 'HINDALCO', 'BPCL', 'COALINDIA', 'EICHERMOT', 'HEROMOTOCO',
-  'INDUSINDBK', 'BRITANNIA', 'DIVISLAB', 'BAJAJ-AUTO', 'TATAPOWER', 'IRCTC',
-  'IDEA', 'HAL',
-];
+import { fetchLiveBundle, jsonHeaders, type IndexQuote, type LiveQuote } from '../src/lib/nse';
 
-const TTL_MS = 45_000;
-const MAX_PER_REQ = 26;
-const POOL = 6;
-const SPACING_MS = 60;
-const FETCH_TIMEOUT_MS = 5_000;
+const TTL_MS = 12_000;
 
-let quotes: Record<string, Quote & { at: number }> = {};
+let cache: { at: number; quotes: LiveQuote[]; index: IndexQuote | null } | null = null;
+let inflight: Promise<{ ts: number; quotes: LiveQuote[]; index: IndexQuote | null }> | null = null;
 
-interface Quote {
-  symbol: string;
-  price: number;
-  prevClose: number;
-  changePct: number;
-  dayHigh: number;
-  dayLow: number;
-  volume: number;
-  ts: number;
-}
-
-async function yahooJson<T>(url: string): Promise<T | null> {
+function parseSymbols(request?: Request): string[] {
+  if (!request) return [];
   try {
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-    if (!res.ok) return null;
-    return (await res.json()) as T;
+    const url = new URL(request.url);
+    return (url.searchParams.get('symbols') ?? '')
+      .split(',')
+      .map((s) => s.trim().toUpperCase())
+      .filter((s) => /^[A-Z0-9][A-Z0-9&-]{0,19}$/.test(s))
+      .slice(0, 24);
   } catch {
-    return null;
+    return [];
   }
 }
 
-async function fetchOne(symbol: string): Promise<Quote | null> {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}.NS?range=1d&interval=5m&includePrePost=false`;
-  const body = await yahooJson<{ chart?: { result?: { meta?: Record<string, unknown> }[] } }>(url);
-  const meta = body?.chart?.result?.[0]?.meta;
-  if (!meta) return null;
-  const num = (k: string): number | null => {
-    const v = meta[k];
-    return typeof v === 'number' && isFinite(v) ? v : null;
-  };
-  const price = num('regularMarketPrice');
-  const prevClose = num('chartPreviousClose') ?? num('previousClose');
-  const dayHigh = num('regularMarketDayHigh');
-  const dayLow = num('regularMarketDayLow');
-  const volume = num('regularMarketVolume');
-  const ts = num('regularMarketTime');
-  if (price == null || prevClose == null || prevClose <= 0) return null;
-  const changePct = ((price - prevClose) / prevClose) * 100;
-  return {
-    symbol,
-    price,
-    prevClose,
-    changePct,
-    dayHigh: dayHigh ?? price,
-    dayLow: dayLow ?? price,
-    volume: Math.round(volume ?? 0),
-    ts: (ts ?? Date.now()) * 1000,
-  };
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: jsonHeaders() });
 }
 
-async function fetchAll(): Promise<{ ts: number; quotes: Quote[] }> {
+export async function GET(request?: Request): Promise<Response> {
+  const extra = parseSymbols(request);
   const now = Date.now();
-  const stale = SYMBOLS.filter((s) => !quotes[s] || now - quotes[s].at > TTL_MS);
-  // Bounded refresh each invocation: rotate over the stale set so a cold or
-  // slow instance never blows the function duration limit. Everything already
-  // cached is still returned, so the response always contains all symbols seen
-  // in the last ~2 polls (~30s), then the other half on the next poll.
-  const chunks: string[][] = [];
-  for (let i = 0; i < stale.length; i += MAX_PER_REQ) chunks.push(stale.slice(i, i + MAX_PER_REQ));
-  const selected = chunks.length ? chunks[Math.floor(now / 20_000) % chunks.length] : [];
 
-  let fetched: Quote[] = [];
-  if (selected.length) {
-    let cursor = 0;
-    const workers = Array.from({ length: POOL }, async () => {
-      while (true) {
-        const idx = cursor;
-        cursor += 1;
-        if (idx >= selected.length) return;
-        const q = await fetchOne(selected[idx]);
-        if (q) {
-          quotes[q.symbol] = { ...q, at: Date.now() };
-          fetched.push(q);
-        }
-        await new Promise((r) => setTimeout(r, SPACING_MS));
+  if (extra.length) {
+    try {
+      const data = await fetchLiveBundle(extra);
+      if (data.quotes.length && cache) {
+        const by = new Map(cache.quotes.map((q) => [q.symbol, q]));
+        for (const q of data.quotes) by.set(q.symbol, q);
+        cache = { at: Date.now(), quotes: [...by.values()], index: data.index ?? cache.index };
       }
-    });
-    await Promise.all(workers);
+      return json({ ts: data.ts, source: 'yahoo', quotes: data.quotes, index: data.index ?? cache?.index ?? null });
+    } catch (err) {
+      const stale = extra
+        .map((s) => cache?.quotes.find((q) => q.symbol === s))
+        .filter((q): q is LiveQuote => Boolean(q));
+      if (stale.length) return json({ ts: cache?.at ?? now, source: 'stale', quotes: stale, index: cache?.index ?? null });
+      return json({ error: err instanceof Error ? err.message : 'live quotes unavailable', quotes: [], index: null }, 503);
+    }
   }
 
-  const out = SYMBOLS.map((s) => quotes[s]).filter(Boolean).map(({ symbol, price, prevClose, changePct, dayHigh, dayLow, volume, ts }) => ({
-    symbol, price, prevClose, changePct, dayHigh, dayLow, volume, ts,
-  }));
-  return { ts: Date.now(), quotes: out };
-}
-
-export async function GET(request: Request): Promise<Response> {
-  const fresh = Object.values(quotes).filter((q) => Date.now() - q.at < TTL_MS);
-  if (fresh.length >= SYMBOLS.length) {
-    return new Response(
-      JSON.stringify({
-        ts: Date.now(),
-        source: 'cache',
-        quotes: SYMBOLS.map((s) => quotes[s]).filter(Boolean).map(({ symbol, price, prevClose, changePct, dayHigh, dayLow, volume, ts }) => ({ symbol, price, prevClose, changePct, dayHigh, dayLow, volume, ts })),
-      }),
-      { status: 200, headers: jsonHeaders() },
-    );
+  if (cache && now - cache.at < TTL_MS && cache.quotes.length) {
+    return json({ ts: now, source: 'cache', quotes: cache.quotes, index: cache.index });
   }
-  const { ts, quotes: out } = await fetchAll();
-  return new Response(
-    JSON.stringify({ ts, source: 'yahoo', quotes: out }),
-    { status: 200, headers: jsonHeaders() },
-  );
-}
 
-function jsonHeaders(): Record<string, string> {
-  return {
-    'Content-Type': 'application/json',
-    'Cache-Control': 'no-store',
-    'Access-Control-Allow-Origin': '*',
-  };
+  try {
+    if (!inflight) {
+      inflight = fetchLiveBundle([]).finally(() => {
+        inflight = null;
+      });
+    }
+    const data = await inflight;
+    if (data.quotes.length) {
+      cache = { at: Date.now(), quotes: data.quotes, index: data.index };
+    }
+    return json({ ts: data.ts, source: 'yahoo', quotes: data.quotes, index: data.index });
+  } catch (err) {
+    if (cache?.quotes.length) {
+      return json({ ts: cache.at, source: 'stale', quotes: cache.quotes, index: cache.index });
+    }
+    return json({ error: err instanceof Error ? err.message : 'live quotes unavailable', quotes: [], index: null }, 503);
+  }
 }
