@@ -564,11 +564,20 @@ async function loadAnalysis(): Promise<boolean> {
 
 const fundaFetching = new Set<string>();
 
+const fundaRefreshed = new Set<string>();
+
+function staleAnalysis(s: string): boolean {
+  const existing = useLive.getState().fundamentals[s];
+  if (!existing || !existing.financials) return true;
+  if (fundaRefreshed.has(s)) return false;
+  if (!existing.financials.finology) return true;
+  return false;
+}
+
 export async function ensureFundamentals(symbols: string[]): Promise<void> {
   const missing = [...new Set(symbols.map((s) => s.trim().toUpperCase()).filter(Boolean))].filter((s) => {
     if (fundaFetching.has(s)) return false;
-    const existing = useLive.getState().fundamentals[s];
-    return !existing || !existing.financials;
+    return staleAnalysis(s);
   });
   if (!missing.length) return;
   for (const s of missing) fundaFetching.add(s);
@@ -585,7 +594,10 @@ export async function ensureFundamentals(symbols: string[]): Promise<void> {
       }
     }
   } finally {
-    for (const s of missing) fundaFetching.delete(s);
+    for (const s of missing) {
+      fundaFetching.delete(s);
+      fundaRefreshed.add(s);
+    }
   }
 }
 

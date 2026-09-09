@@ -657,6 +657,7 @@ a.news-headline:hover { color: var(--cyan); }
 }
 .ratio .k { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); }
 .ratio .v { font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums; margin-top: 3px; }
+.ratio .sub { font-family: var(--font-mono); font-size: 9px; color: var(--dim); margin-top: 4px; letter-spacing: 0.02em; line-height: 1.35; }
 
 /* screener panel */
 .seg { display: inline-flex; gap: 4px; border: 1px solid var(--line); border-radius: 999px; padding: 3px; background: var(--panel2); }

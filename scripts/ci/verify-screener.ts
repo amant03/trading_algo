@@ -10,6 +10,8 @@ import {
   fetchRealFundamentals,
   applyScreener,
   emptyMetrics,
+  parseFinologyHtml,
+  pegFromPeAndGrowth,
 } from '../../frontend/src/lib/funda.js';
 
 const ROOT = join(process.cwd());
@@ -68,10 +70,21 @@ function runSaved() {
     defaultView: 'consolidated',
     views: { consolidated: cons, standalone: std },
     bank: null,
+    finology: null,
   });
   check('applied ROE', m.roe != null && m.roe > 5, String(m.roe));
   check('applied ROCE', m.roce != null && m.roce > 5, String(m.roce));
   check('applied D/E', m.debtToEquity != null, String(m.debtToEquity));
+  check('applied PEG from Screener PE/growth', m.peg != null && m.peg > 0, String(m.peg));
+
+  const finoPath = join(ROOT, 'tmp', 'fino-LODHA.html');
+  if (existsSync(finoPath)) {
+    const fino = parseFinologyHtml(readFileSync(finoPath, 'utf8'));
+    check('finology LODHA ratio cards', fino.ratios.length >= 6, String(fino.ratios.map((r) => r.label)));
+    check('finology LODHA has D/E', fino.ratios.some((r) => /debt/i.test(r.label) && r.value != null), JSON.stringify(fino.ratios.find((r) => /debt/i.test(r.label))));
+    check('finology LODHA ROE', fino.essentials.some((e) => e.key === 'roe' && (e.value ?? 0) > 10), String(fino.essentials.find((e) => e.key === 'roe')?.value));
+  }
+  check('PEG formula PE/growth', pegFromPeAndGrowth(28.3, 103.3) === 0.27, String(pegFromPeAndGrowth(28.3, 103.3)));
 
   console.log('\nLODHA consolidated derived:', JSON.stringify({
     latestYear: d?.latestYear,
@@ -84,6 +97,7 @@ function runSaved() {
     operatingMargin: d?.operatingMargin,
     revenueGrowth: d?.revenueGrowth,
     earningsGrowth: d?.earningsGrowth,
+    peg: d?.peg,
     debtToEquity: d?.debtToEquity,
     currentRatio: d?.currentRatio,
     debtorDays: d?.debtorDays,
@@ -109,13 +123,17 @@ async function runLive(symbols: string[]) {
       check(`${sym} has default view`, !!v, sf.defaultView);
       check(`${sym} ROE`, d?.roe != null || v?.snapshot.roe != null, `roe=${d?.roe} strip=${v?.snapshot.roe}`);
       check(`${sym} ROCE`, d?.roce != null || v?.snapshot.roce != null, `roce=${d?.roce}`);
-      check(`${sym} sales or bank`, (d?.sales ?? 0) > 0 || sf.sectorKind === 'bank', String(d?.sales));
+      check(`${sym} PEG`, (v?.derived?.peg != null && v.derived.peg > 0) || sf.finology?.peg != null || (v?.snapshot.pe != null && (d?.earningsGrowth ?? 0) > 0), `peg=${v?.derived?.peg} pe=${v?.snapshot.pe} g=${d?.earningsGrowth}`);
+      if (sf.finology) {
+        check(`${sym} Finology ratios`, sf.finology.ratios.length >= 4, String(sf.finology.ratios.map((r) => r.label)));
+      }
+      check(`${sym} sales or bank`, (d?.sales ?? 0) > 0 || sf.sectorKind === 'bank' || sf.sectorKind === 'nbfc' || sf.sectorKind === 'amc' || sf.sectorKind === 'insurance', String(d?.sales));
       if (sf.sectorKind === 'bank' || sf.sectorKind === 'nbfc') {
         check(`${sym} NPA`, sf.bank?.grossNpa != null || sf.bank?.netNpa != null, JSON.stringify(sf.bank));
       }
       const views = Object.keys(sf.views);
       check(`${sym} at least one view`, views.length >= 1, views.join(','));
-      console.log(`ok views=${views.join('+')} kind=${sf.sectorKind} roe=${d?.roe} roce=${d?.roce} npa=${sf.bank?.grossNpa ?? '—'}`);
+      console.log(`ok views=${views.join('+')} kind=${sf.sectorKind} peg=${d?.peg} roe=${d?.roe} fino=${sf.finology?.ratios.length ?? 0}`);
     } catch (e) {
       fail.push(`${sym}: ${e instanceof Error ? e.message : e}`);
       console.log('ERR');
@@ -127,7 +145,7 @@ async function main() {
   runSaved();
   const offline = process.argv.includes('--offline');
   if (!offline) {
-    await runLive(['LODHA', 'HDFCBANK', 'RELIANCE', 'TCS', 'INFY', 'SBIN']);
+    await runLive(['LODHA', 'HDFCBANK', 'RELIANCE', 'TCS', 'INFY', 'SBIN', 'ICICIAMC']);
   }
   console.log(`\n${ok.length} passed, ${fail.length} failed`);
   if (fail.length) {

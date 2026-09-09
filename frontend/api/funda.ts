@@ -383,7 +383,14 @@ export async function screenerPeers(symbol: string): Promise<string[]> {
 
 export type ConsolidationView = 'consolidated' | 'standalone';
 export type RatioUnit = 'pct' | 'days' | 'x' | 'cr' | 'rs' | 'number';
-export type SectorKind = 'bank' | 'nbfc' | 'insurance' | 'realty' | 'generic';
+export type SectorKind = 'bank' | 'nbfc' | 'insurance' | 'realty' | 'amc' | 'generic';
+
+/** PEG = P/E ÷ earnings-growth %. Screener does not publish a PEG field — we derive it from their PE + profit growth. */
+export function pegFromPeAndGrowth(pe: number | null | undefined, growthPct: number | null | undefined): number | null {
+  if (pe == null || !Number.isFinite(pe) || pe <= 0) return null;
+  if (growthPct == null || !Number.isFinite(growthPct) || growthPct <= 0) return null;
+  return Math.round((pe / growthPct) * 100) / 100;
+}
 
 export interface ScreenerRange {
   label: string;
@@ -441,6 +448,7 @@ export interface ScreenerDerived {
   debtorDays: number | null;
   inventoryDays: number | null;
   workingCapitalDays: number | null;
+  peg: number | null;
   byYear: ScreenerYearMetrics[];
 }
 
@@ -456,6 +464,7 @@ export interface ScreenerSnapshot {
   faceValue: number | null;
   high: number | null;
   low: number | null;
+  peg: number | null;
 }
 
 export interface ScreenerView {
@@ -478,6 +487,24 @@ export interface ScreenerBankRatios {
   source: string;
 }
 
+/** One Finology ticker.finology.in ratio tile (Company Essentials or the Ratios section). */
+export interface SectorRatioCard {
+  key: string;
+  label: string;
+  value: number | null;
+  unit: RatioUnit;
+  y1: number | null;
+  y3: number | null;
+  y5: number | null;
+}
+
+export interface FinologySnapshot {
+  peg: number | null;
+  essentials: SectorRatioCard[];
+  ratios: SectorRatioCard[];
+  bank: ScreenerBankRatios | null;
+}
+
 export interface ScreenerFundamentals {
   symbol: string;
   name: string | null;
@@ -488,6 +515,7 @@ export interface ScreenerFundamentals {
   defaultView: ConsolidationView;
   views: Partial<Record<ConsolidationView, ScreenerView>>;
   bank: ScreenerBankRatios | null;
+  finology: FinologySnapshot | null;
 }
 
 const deEnt = (s: string): string =>
@@ -499,9 +527,9 @@ const deEnt = (s: string): string =>
     .replace(/&#39;/g, "'")
     .replace(/&nbsp;/g, ' ');
 
-/** Pull the number out of a Screener cell (Indian commas, %, ₹, blanks, NA). */
+/** Pull the number out of a Screener or Finology cell (Indian commas, %, ₹, blanks, NA). */
 function scrNum(text: string): number | null {
-  const span = text.match(/<span class="number">([^<]*)<\/span>/);
+  const span = text.match(/<span class=["']number["']>([^<]*)<\/span>/i);
   let raw = deEnt(span ? span[1] : text.replace(/<[^>]+>/g, ''));
   raw = raw.replace(/[₹]/g, '').replace(/%/g, '').replace(/[,\s\u00a0]/g, '').trim();
   if (!raw || raw === '-' || raw === '—' || /^n\/?a$/i.test(raw)) return null;
@@ -523,9 +551,9 @@ export function normRatioKey(label: string): string {
 
 export function unitFromLabel(label: string): RatioUnit {
   const k = label.toLowerCase();
-  if (/%/.test(k) || /\b(roce|roe|roa|opm|npm|margin|yield|growth|npa|casa|tax|payout)\b/.test(k)) return 'pct';
+  if (/%/.test(k) || /\b(roce|roe|roa|opm|npm|margin|yield|growth|npa|casa|tax|payout|nim|car)\b/.test(k)) return 'pct';
   if (/\bdays\b/.test(k) || /conversion cycle/.test(k)) return 'days';
-  if (/coverage|current ratio|quick ratio|debt to equity/.test(k)) return 'x';
+  if (/coverage|current ratio|quick ratio|debt to equity|peg|debt\/equity/.test(k)) return 'x';
   if (/\beps\b/.test(k) || /book value|face value|current price/.test(k)) return 'rs';
   return 'number';
 }
@@ -601,7 +629,7 @@ function parseScreenerTable(html: string, sectionId: string): ScreenerTable | nu
 function parseScreenerStrip(html: string): ScreenerSnapshot {
   const out: ScreenerSnapshot = {
     price: null, marketCap: null, pe: null, pb: null, bookValue: null,
-    dividendYield: null, roce: null, roe: null, faceValue: null, high: null, low: null,
+    dividendYield: null, roce: null, roe: null, faceValue: null, high: null, low: null, peg: null,
   };
   const start = html.indexOf('<ul id="top-ratios">');
   if (start < 0) return out;
@@ -629,6 +657,7 @@ function parseScreenerStrip(html: string): ScreenerSnapshot {
     else if (key.includes('dividend yield')) out.dividendYield = nn(0);
     else if (key.trim() === 'roce') out.roce = nn(0);
     else if (key.trim() === 'roe') out.roe = nn(0);
+    else if (key.includes('peg')) out.peg = nn(0);
     else if (key.includes('face value')) out.faceValue = nn(0);
   }
   if (out.pb == null && out.bookValue != null && out.bookValue > 0 && out.price != null && out.price > 0) {
@@ -643,8 +672,7 @@ function parseRanges(html: string): ScreenerRange[] {
     const b = m[1];
     const th = b.match(/<th[^>]*>([\s\S]*?)<\/th>/);
     const label = th ? deEnt(th[1].replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim() : '';
-    if (!label || label.toLowerCase().startsWith('compounded')) continue;
-    if (label.toLowerCase().includes('price cagr')) continue;
+    if (!label || label.toLowerCase().includes('price cagr')) continue;
     const val = (key: string): number | null => {
       const rm = b.match(new RegExp(`<td>\\s*${key}\\s*</td>\\s*<td[^>]*>([\\s\\S]*?)<\\/td>`));
       return rm ? scrNum(rm[1]) : null;
@@ -654,7 +682,7 @@ function parseRanges(html: string): ScreenerRange[] {
       y10: val('10 Years:'),
       y5: val('5 Years:'),
       y3: val('3 Years:'),
-      y1: val('Last Year:') ?? val('1 Year:'),
+      y1: val('Last Year:') ?? val('1 Year:') ?? val('TTM:'),
     });
   }
   return out;
@@ -691,6 +719,7 @@ const IC_KEYS = ['interest coverage'];
 const DD_KEYS = ['debtor days'];
 const ID_KEYS = ['inventory days'];
 const WC_KEYS = ['working capital days'];
+const PEG_KEYS = ['peg', 'peg ratio'];
 
 function atRow(map: Map<string, ScreenerRow>, aliases: string[], i: number): number | null {
   for (const a of aliases) {
@@ -851,6 +880,12 @@ function deriveScreener(
     debtorDays: rnd(latestRow(rtMap, DD_KEYS, li), 0),
     inventoryDays: rnd(latestRow(rtMap, ID_KEYS, li), 0),
     workingCapitalDays: rnd(latestRow(rtMap, WC_KEYS, li), 0),
+    peg: rnd(
+      latestRow(rtMap, PEG_KEYS, li) ??
+        strip.peg ??
+        pegFromPeAndGrowth(strip.pe, g(l?.netProfit ?? null, prevFiscal?.netProfit ?? null)),
+      2,
+    ),
     byYear,
   };
 }
@@ -894,6 +929,7 @@ export function sectorKindOf(sector: string | null, industry: string | null): Se
   if (/\binsurance\b/.test(s)) return 'insurance';
   if (/\bbank\b/.test(s)) return 'bank';
   if (/\bnbfc\b/.test(s) || /housing finance/.test(s) || /non.?banking/.test(s)) return 'nbfc';
+  if (/asset management|mutual fund|\bamc\b/.test(s)) return 'amc';
   if (/real estate|realty|construction|developer/.test(s)) return 'realty';
   return 'generic';
 }
@@ -944,7 +980,7 @@ export async function fetchScreenerFundamentals(symbol: string): Promise<Screene
     src.match(/<span class="min-width-0 overflow-wrap-anywhere">([\s\S]*?)<\/span>/)?.[1]?.replace(/<[^>]+>/g, '').trim() ??
     null;
   const defaultView: ConsolidationView = views.consolidated ? 'consolidated' : 'standalone';
-  const kind = sectorKindOf([broad, sector, industry].filter(Boolean).join(' '), null);
+  const kind = sectorKindOf([broad, sector, industry, brand].filter(Boolean).join(' '), null);
 
   return {
     symbol,
@@ -956,66 +992,183 @@ export async function fetchScreenerFundamentals(symbol: string): Promise<Screene
     defaultView,
     views,
     bank: kind === 'bank' || kind === 'nbfc' ? bankFromScreenerRows(views[defaultView]) : null,
+    finology: null,
   };
 }
 
 const FINOLOGY_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
 
-function isBankingSector(sector: string | null, industry: string | null): boolean {
-  const k = sectorKindOf(sector, industry);
-  return k === 'bank' || k === 'nbfc';
+function finoStripLabel(html: string): string {
+  return deEnt(
+    html
+      .replace(/<span class=['"]infolink[\s\S]*?<\/span>/gi, '')
+      .replace(/<small>[\s\S]*?<\/small>/gi, ' ')
+      .replace(/<[^>]+>/g, ' '),
+  )
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
-/** Pull quarterly Gross NPA / Net NPA / ROA / NPM for a bank from Finology. */
-export async function fetchFinologyBankRatios(symbol: string): Promise<ScreenerBankRatios | null> {
+function finoCard(label: string, value: number | null, y1: number | null = null, y3: number | null = null, y5: number | null = null): SectorRatioCard {
+  return { key: normRatioKey(label), label, value, unit: unitFromLabel(label), y1, y3, y5 };
+}
+
+function parseFinologyEssentials(html: string): SectorRatioCard[] {
+  const start = html.indexOf('id="mainContent_updAddRatios"');
+  if (start < 0) return [];
+  const end = html.indexOf('class="noteremarks"', start);
+  const seg = html.slice(start, end > 0 ? end : start + 25000);
+  const out: SectorRatioCard[] = [];
+  for (const m of seg.matchAll(/<div class="col-6 col-md-4 compess">([\s\S]*?)<\/div>/g)) {
+    const block = m[1];
+    const small = block.match(/<small>([\s\S]*?)<\/small>/);
+    if (!small) continue;
+    const label = finoStripLabel(small[1]);
+    if (!label || /add your ratio/i.test(label)) continue;
+    const p = block.match(/<p>([\s\S]*?)<\/p>/);
+    out.push(finoCard(label, p ? scrNum(p[1]) : null));
+  }
+  return out;
+}
+
+function parseFinologyRatioCards(html: string): SectorRatioCard[] {
+  const start = html.indexOf('id="ratios"');
+  if (start < 0) return [];
+  const ends = ['id="mainContent_ShareHolding"', 'id="mainContent_ProsAndCons"']
+    .map((n) => html.indexOf(n, start))
+    .filter((i) => i > start);
+  const seg = html.slice(start, ends.length ? Math.min(...ends) : start + 80000);
+  const out: SectorRatioCard[] = [];
+  for (const m of seg.matchAll(/<h4[^>]*>([\s\S]*?)<\/h4>/g)) {
+    const label = finoStripLabel(m[1]);
+    if (!label || label.length > 80) continue;
+    const after = m.index + m[0].length;
+    const nextH4 = seg.indexOf('<h4', after);
+    const body = seg.slice(after, nextH4 > after ? nextH4 : after + 1800);
+    const periods: { y1: number | null; y3: number | null; y5: number | null } = { y1: null, y3: null, y5: null };
+    for (const p of body.matchAll(/<span class="duration">([^<]+)<\/span>\s*<span class="durationvalue">([^<]+)<\/span>/g)) {
+      const dur = p[1].trim().toLowerCase();
+      const val = scrNum(p[2]);
+      if (dur.startsWith('1')) periods.y1 = val;
+      else if (dur.startsWith('3')) periods.y3 = val;
+      else if (dur.startsWith('5')) periods.y5 = val;
+    }
+    let value: number | null = periods.y1;
+    if (value == null) {
+      const h2 = body.match(/<(?:span class="h2"|h2)[^>]*>([\s\S]*?)<\/(?:span|h2)>/i);
+      if (h2 && !/\bNA\b/i.test(finoStripLabel(h2[1]))) value = scrNum(h2[1]);
+    }
+    out.push(finoCard(label, value, periods.y1, periods.y3, periods.y5));
+  }
+  return out;
+}
+
+function parseFinologyBankTable(html: string): ScreenerBankRatios | null {
+  const anchor = html.indexOf('Gross NPA');
+  if (anchor < 0) return null;
+  const tableStart = html.lastIndexOf('<table', anchor);
+  const tableEnd = html.indexOf('</table>', anchor);
+  if (tableStart < 0 || tableEnd < 0) return null;
+  const seg = html.slice(tableStart, tableEnd);
+  const out: ScreenerBankRatios = { grossNpa: null, netNpa: null, roa: null, npm: null, source: 'finology' };
+  for (const rm of seg.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)) {
+    const row = rm[1];
+    const th = row.match(/<th scope="row">([\s\S]*?)<\/th>/);
+    if (!th) continue;
+    const label = deEnt(th[1].replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim().toLowerCase();
+    const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((c) => c[1]);
+    let value: number | null = null;
+    for (let i = cells.length - 1; i >= 0; i -= 1) {
+      const v = scrNum(cells[i]);
+      if (v != null) {
+        value = v;
+        break;
+      }
+    }
+    if (label === 'gross npa %' || label === 'gross npa') out.grossNpa = value;
+    else if (label === 'net npa %' || label === 'net npa') out.netNpa = value;
+    else if (label === 'return on assets %' || label === 'roa %') out.roa = value;
+    else if (label === 'npm %' || label === 'npm') out.npm = value;
+  }
+  return out.grossNpa == null && out.netNpa == null ? null : out;
+}
+
+function finoFind(cards: SectorRatioCard[], aliases: string[]): number | null {
+  const keys = aliases.map(normRatioKey);
+  for (const c of cards) {
+    if (c.value == null) continue;
+    if (keys.includes(c.key)) return c.value;
+  }
+  for (const k of keys) {
+    const hit = cards.find(
+      (c) => c.value != null && (c.key.startsWith(`${k} `) || c.key.endsWith(` ${k}`)),
+    );
+    if (hit) return hit.value;
+  }
+  return null;
+}
+
+function fillRatioGapsFromEssentials(ratios: SectorRatioCard[], essentials: SectorRatioCard[]): void {
+  for (const r of ratios) {
+    if (r.value != null) continue;
+    const hit = finoFind(essentials, [r.label, r.key, r.label.replace(/%/g, '')]);
+    if (hit != null) r.value = hit;
+  }
+}
+
+/** Parse ticker.finology.in company HTML — essentials + sector ratio cards + bank NPA table. */
+export function parseFinologyHtml(html: string): FinologySnapshot {
+  const essentials = parseFinologyEssentials(html);
+  const ratios = parseFinologyRatioCards(html);
+  fillRatioGapsFromEssentials(ratios, essentials);
+  const bank = parseFinologyBankTable(html);
+  const peg = finoFind(ratios, ['peg', 'peg ratio']) ?? finoFind(essentials, ['peg', 'peg ratio']);
+  return { peg, essentials, ratios, bank };
+}
+
+export async function fetchFinologySnapshot(symbol: string): Promise<FinologySnapshot | null> {
   try {
     const res = await fetch(`https://ticker.finology.in/company/${encodeURIComponent(symbol)}`, {
       headers: { 'User-Agent': FINOLOGY_UA, Accept: 'text/html,application/xhtml+xml' },
       signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) return null;
-    const html = await res.text();
-    const anchor = html.indexOf('Gross NPA');
-    if (anchor < 0) return null;
-    const tableStart = html.lastIndexOf('<table', anchor);
-    const tableEnd = html.indexOf('</table>', anchor);
-    if (tableStart < 0 || tableEnd < 0) return null;
-    const seg = html.slice(tableStart, tableEnd);
-    const out: ScreenerBankRatios = { grossNpa: null, netNpa: null, roa: null, npm: null, source: 'finology' };
-    for (const rm of seg.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)) {
-      const row = rm[1];
-      const th = row.match(/<th scope="row">([\s\S]*?)<\/th>/);
-      if (!th) continue;
-      const label = deEnt(th[1].replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim().toLowerCase();
-      const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((c) => c[1]);
-      let value: number | null = null;
-      for (let i = cells.length - 1; i >= 0; i -= 1) {
-        const v = scrNum(cells[i]);
-        if (v != null) {
-          value = v;
-          break;
-        }
-      }
-      if (label === 'gross npa %' || label === 'gross npa') out.grossNpa = value;
-      else if (label === 'net npa %' || label === 'net npa') out.netNpa = value;
-      else if (label === 'return on assets %' || label === 'roa %') out.roa = value;
-      else if (label === 'npm %' || label === 'npm') out.npm = value;
-    }
-    return out.grossNpa == null && out.netNpa == null ? null : out;
+    return parseFinologyHtml(await res.text());
   } catch {
     return null;
   }
 }
 
-/** Best-effort full fundamentals (Screener ratios + Finology bank NPA). */
+/** Pull quarterly Gross NPA / Net NPA / ROA / NPM for a bank from Finology. */
+export async function fetchFinologyBankRatios(symbol: string): Promise<ScreenerBankRatios | null> {
+  const snap = await fetchFinologySnapshot(symbol);
+  return snap?.bank ?? null;
+}
+
+/** Best-effort full fundamentals (Screener + Finology sector ratios). */
 export async function fetchRealFundamentals(symbol: string): Promise<ScreenerFundamentals | null> {
-  const sf = await fetchScreenerFundamentals(symbol);
-  if (sf && (sf.sectorKind === 'bank' || sf.sectorKind === 'nbfc')) {
-    const fin = await fetchFinologyBankRatios(symbol);
-    if (fin) sf.bank = fin;
+  const [sf, fino] = await Promise.all([fetchScreenerFundamentals(symbol), fetchFinologySnapshot(symbol)]);
+  if (!sf) return null;
+  if (fino) {
+    sf.finology = fino;
+    if (fino.bank && (sf.sectorKind === 'bank' || sf.sectorKind === 'nbfc')) sf.bank = fino.bank;
   }
   return sf;
+}
+
+function preferFilled(current: number | null, next: number | null): number | null {
+  if (next == null) return current;
+  if (current == null) return next;
+  if (current === 0 && next !== 0) return next;
+  return current;
+}
+
+function growthForPeg(m: Metrics, v: ScreenerView): number | null {
+  const fromMetrics = m.earningsGrowth ?? m.growth ?? m.revenueGrowth;
+  if (fromMetrics != null && fromMetrics > 0) return fromMetrics;
+  const profit = v.ranges.find((r) => /profit growth/i.test(r.label));
+  return profit?.y1 ?? profit?.y3 ?? profit?.y5 ?? v.derived?.earningsGrowth ?? null;
 }
 
 /** Fill legacy Metrics with Screener values. Top-strip (current TTM) wins over reconstructed annuals. */
@@ -1054,7 +1207,31 @@ export function applyScreener(m: Metrics, sf: ScreenerFundamentals | null): void
     if (d.quickRatio != null) m.quickRatio = d.quickRatio;
     if (d.eps != null) m.eps = d.eps;
     m.growth = d.earningsGrowth ?? m.growth ?? d.revenueGrowth;
+    if (d.peg != null) m.peg = d.peg;
   }
+
+  const fino = sf.finology;
+  if (fino) {
+    const pool = [...fino.essentials, ...fino.ratios];
+    m.roe = preferFilled(m.roe, finoFind(pool, ['roe', 'roe%']));
+    m.roce = preferFilled(m.roce, finoFind(pool, ['roce', 'roce%']));
+    m.roa = preferFilled(m.roa, finoFind(pool, ['roa', 'roa%']));
+    const fBv = finoFind(pool, ['book value ttm', 'book value']);
+    const fPb = finoFind(pool, ['p b']);
+    if (m.bookValue == null || m.bookValue === 0) {
+      if (fBv != null && fBv !== 0) {
+        m.bookValue = fBv;
+        if (fPb != null && fPb > 0) m.pb = fPb;
+        else if ((m.price ?? 0) > 0) m.pb = Math.round((m.price / fBv) * 100) / 100;
+      }
+    }
+    m.debtToEquity = preferFilled(m.debtToEquity, finoFind(pool, ['debt equity', 'debt to equity']));
+    m.netMargin = preferFilled(m.netMargin, finoFind(pool, ['pat margin', 'npm', 'net margin']));
+  }
+
+  m.growth = m.earningsGrowth ?? m.growth ?? m.revenueGrowth;
+  const computed = pegFromPeAndGrowth(m.pe, growthForPeg(m, v));
+  m.peg = computed ?? m.peg ?? fino?.peg ?? null;
 }
 
 // ---- Screens -------------------------------------------------------------
@@ -1315,7 +1492,8 @@ export function buildEntry(opts: {
   financials?: ScreenerFundamentals | null;
 }): AnalysisEntry {
   const { symbol, name, m, price } = opts;
-  m.growth = m.earningsGrowth ?? m.revenueGrowth;
+  m.growth = m.earningsGrowth ?? m.revenueGrowth ?? m.growth;
+  if (m.peg == null) m.peg = pegFromPeAndGrowth(m.pe, m.growth);
   const verdict = computeVerdict(m, price, symbol, name);
   const screens = {
     buffett: buffettScreen(m),
@@ -1379,7 +1557,8 @@ export function buildEntry(opts: {
 // Computes the same analysis that the nightly batch produces
 // (`scripts/ci/fundamentals.ts` -> analysis.json) for ANY symbol, live, using
 // free Yahoo quoteSummary data + Screener.in ratios (consolidated view
-// preferred, standalone fallback) + Finology bank NPA. Results are cached
+// preferred, standalone fallback) + Finology sector key-ratios (PEG always
+// derived from Screener PE ÷ earnings growth). Results are cached
 // in-memory for 6h and merged into the frontend store, so
 // watchlisted/viewed stocks get full fundamentals without waiting for the
 // nightly run — while prices keep updating through /api/live and /api/chart.

@@ -10,6 +10,7 @@ import NewsFeed from '../components/NewsFeed';
 import CompetitionPanel from '../components/CompetitionPanel';
 import ReportsPanel from '../components/ReportsPanel';
 import ScreenerPanel from '../components/ScreenerPanel';
+import KeyRatios from '../components/KeyRatios';
 import AIAnalyst from '../components/AIAnalyst';
 import {
   sma,
@@ -761,28 +762,7 @@ export default function Stock() {
                   </div>
                 </div>
 
-                <div className="ratio-grid" style={{ marginBottom: 14 }}>
-                  <div className="ratio"><div className="k">P/E</div><div className="v">{analysis.metrics.pe?.toFixed(1) ?? '—'}</div></div>
-                  <div className="ratio"><div className="k">P/B</div><div className="v">{analysis.metrics.pb?.toFixed(1) ?? '—'}</div></div>
-                  <div className="ratio"><div className="k">P/S</div><div className="v">{analysis.metrics.ps?.toFixed(2) ?? '—'}</div></div>
-                  <div className="ratio"><div className="k">PEG</div><div className="v">{analysis.metrics.peg?.toFixed(2) ?? '—'}</div></div>
-                  <div className="ratio"><div className="k">ROE</div><div className="v">{analysis.metrics.roe?.toFixed(1) ?? '—'}%</div></div>
-                  <div className="ratio"><div className="k">ROCE</div><div className="v">{analysis.metrics.roce?.toFixed(1) ?? '—'}%</div></div>
-                  <div className="ratio"><div className="k">ROA</div><div className="v">{analysis.metrics.roa?.toFixed(1) ?? '—'}%</div></div>
-                  <div className="ratio"><div className="k">Growth</div><div className="v">{analysis.metrics.growth?.toFixed(1) ?? '—'}%</div></div>
-                  <div className="ratio"><div className="k">Rev Gth</div><div className="v">{analysis.metrics.revenueGrowth?.toFixed(1) ?? '—'}%</div></div>
-                  <div className="ratio"><div className="k">Net Mar</div><div className="v">{analysis.metrics.netMargin?.toFixed(1) ?? '—'}%</div></div>
-                  <div className="ratio"><div className="k">Op Mar</div><div className="v">{analysis.metrics.operatingMargin?.toFixed(1) ?? '—'}%</div></div>
-                  <div className="ratio"><div className="k">Gross Mar</div><div className="v">{analysis.metrics.grossMargin?.toFixed(1) ?? '—'}%</div></div>
-                  <div className="ratio"><div className="k">D/E</div><div className="v">{analysis.metrics.debtToEquity?.toFixed(2) ?? '—'}</div></div>
-                  <div className="ratio"><div className="k">Cur Ratio</div><div className="v">{analysis.metrics.currentRatio?.toFixed(2) ?? '—'}</div></div>
-                  <div className="ratio"><div className="k">Qk Ratio</div><div className="v">{analysis.metrics.quickRatio?.toFixed(2) ?? '—'}</div></div>
-                  <div className="ratio"><div className="k">EPS</div><div className="v">{fmt(analysis.metrics.eps)}</div></div>
-                  <div className="ratio"><div className="k">BV/Sh</div><div className="v">{fmt(analysis.metrics.bookValue)}</div></div>
-                  <div className="ratio"><div className="k">Beta</div><div className="v">{analysis.metrics.beta?.toFixed(2) ?? '—'}</div></div>
-                  <div className="ratio"><div className="k">Div Yld</div><div className="v">{analysis.metrics.dividendYield?.toFixed(2) ?? '—'}%</div></div>
-                  <div className="ratio"><div className="k">Mkt Cap</div><div className="v">{analysis.marketCap ? fmtCompact(analysis.marketCap) : '—'}</div></div>
-                </div>
+                <KeyRatios analysis={analysis} />
                 <div className="dim" style={{ fontSize: 11, lineHeight: 1.8, marginBottom: 4 }}>
                   {instrument?.isin && <span>ISIN <span className="mono">{instrument.isin}</span> · </span>}
                   {instrument?.exchange && <span>listed on {instrument.exchange}</span>}

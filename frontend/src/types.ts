@@ -299,7 +299,7 @@ export interface StockReports {
 
 export type ConsolidationView = 'consolidated' | 'standalone';
 export type RatioUnit = 'pct' | 'days' | 'x' | 'cr' | 'rs' | 'number';
-export type SectorKind = 'bank' | 'nbfc' | 'insurance' | 'realty' | 'generic';
+export type SectorKind = 'bank' | 'nbfc' | 'insurance' | 'realty' | 'amc' | 'generic';
 
 export interface ScreenerRange {
   label: string;
@@ -357,6 +357,7 @@ export interface ScreenerDerived {
   debtorDays: number | null;
   inventoryDays: number | null;
   workingCapitalDays: number | null;
+  peg: number | null;
   byYear: ScreenerYearMetrics[];
 }
 
@@ -372,6 +373,7 @@ export interface ScreenerSnapshot {
   faceValue: number | null;
   high: number | null;
   low: number | null;
+  peg?: number | null;
 }
 
 export interface ScreenerView {
@@ -394,6 +396,23 @@ export interface ScreenerBankRatios {
   source: string;
 }
 
+export interface SectorRatioCard {
+  key: string;
+  label: string;
+  value: number | null;
+  unit: RatioUnit;
+  y1: number | null;
+  y3: number | null;
+  y5: number | null;
+}
+
+export interface FinologySnapshot {
+  peg: number | null;
+  essentials: SectorRatioCard[];
+  ratios: SectorRatioCard[];
+  bank: ScreenerBankRatios | null;
+}
+
 export interface ScreenerFundamentals {
   symbol: string;
   name: string | null;
@@ -404,6 +423,7 @@ export interface ScreenerFundamentals {
   defaultView: ConsolidationView;
   views: Partial<Record<ConsolidationView, ScreenerView>>;
   bank: ScreenerBankRatios | null;
+  finology?: FinologySnapshot | null;
 }
 
 export interface StockAnalysis {

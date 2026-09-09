@@ -145,7 +145,37 @@ export default function ScreenerPanel({ symbol, financials }: Props) {
             </span>
           );
         })}
+        <span className="rel-chip" style={{ fontSize: 11 }}>
+          <span style={{ color: 'var(--muted)' }}>PEG</span> <b>{cr2(d?.peg ?? financials.finology?.peg)}</b>
+        </span>
       </div>
+
+      {financials.finology?.ratios?.length ? (
+        <div className="card" style={{ marginTop: 10 }}>
+          <div className="card-h" style={{ marginBottom: 6 }}>
+            Key ratios — {kind === 'generic' ? (financials.sector ?? 'company') : kind}
+          </div>
+          <div className="ratio-grid">
+            {financials.finology.ratios.map((r) => (
+              <div className="ratio" key={r.key}>
+                <div className="k">{r.label}</div>
+                <div className="v">{fmtUnit(r.value, r.unit)}</div>
+                {(r.y3 != null || r.y5 != null) && (
+                  <div className="sub">
+                    {r.y1 != null ? `1Y ${fmtUnit(r.y1, r.unit)}` : ''}
+                    {r.y3 != null ? ` · 3Y ${fmtUnit(r.y3, r.unit)}` : ''}
+                    {r.y5 != null ? ` · 5Y ${fmtUnit(r.y5, r.unit)}` : ''}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="hint" style={{ marginTop: 6 }}>
+            Sector tiles match ticker.finology.in ·{' '}
+            <a href={`https://ticker.finology.in/company/${symbol}`} target="_blank" rel="noopener noreferrer">Open Finology ↗</a>
+          </div>
+        </div>
+      ) : null}
 
       {(kind === 'bank' || kind === 'nbfc') && financials.bank && (
         <div className="card" style={{ marginTop: 8 }}>

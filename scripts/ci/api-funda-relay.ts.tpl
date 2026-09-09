@@ -11,7 +11,8 @@
 // Computes the same analysis that the nightly batch produces
 // (`scripts/ci/fundamentals.ts` -> analysis.json) for ANY symbol, live, using
 // free Yahoo quoteSummary data + Screener.in ratios (consolidated view
-// preferred, standalone fallback) + Finology bank NPA. Results are cached
+// preferred, standalone fallback) + Finology sector key-ratios (PEG always
+// derived from Screener PE ÷ earnings growth). Results are cached
 // in-memory for 6h and merged into the frontend store, so
 // watchlisted/viewed stocks get full fundamentals without waiting for the
 // nightly run — while prices keep updating through /api/live and /api/chart.
