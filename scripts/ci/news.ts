@@ -4,16 +4,26 @@
 // merges them with whatever is already in `frontend/public/news.json`, prunes
 // anything older than 7 days and writes the result back. The deployed UI reads
 // this file straight off the `automation-data` branch (raw.githubusercontent)
-// so news updates hourly-ish with zero redeploys.
+// so news updates every 2 hours during market hours with zero redeploys.
+//
+// Symbol coverage follows the fundamentals coverage (SEED + whatever is in
+// `analysis.json`), so the nightly analysis batch automatically widens the
+// news net too. HEADLESS-ness: no DB required — pure Google News RSS.
+//
+// Env knobs:
+//   NEWS_MAX_SYMBOLS  cap on how many symbols are live-fetched this run
+//                     (market-hours runs use a small cap to stay quick)
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { INSTRUMENTS as SEED } from '../../services/shared/src/instruments-data.js';
 
 const NEWS_FILE = join(process.cwd(), 'frontend', 'public', 'news.json');
+const ANALYSIS_FILE = join(process.cwd(), 'frontend', 'public', 'analysis.json');
 const KEEP_DAYS = 7;
 const PER_SYMBOL = 12;
 const FETCH_TIMEOUT_MS = 10_000;
+const POOL_SIZE = 6;
 const US_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36';
 
@@ -123,31 +133,66 @@ async function main(): Promise<void> {
     }
   }
 
-  // live fetch for every symbol
-  let fetched = 0;
-  for (const s of SEED) {
-    const sym = s.symbol;
-    const name = s.name;
-    const tokens = significantTokens(name, sym);
-    const queries = [
-      `"${name}" stock NSE`,
-      `"${name}" OR "${sym}" NSE law suit OR fraud OR scam OR SEBI OR CBI OR ED OR court OR FIR OR investigation OR penalty`,
-      `${sym} NS news India market`,
-    ];
-    const seen: string[] = [];
-    for (const q of queries) {
-      const hits = await fetchRss(q);
-      fetched += hits.length;
-      for (const a of hits) {
-        if (!looksRelevant(a.title, tokens)) continue;
-        const n = normalize(a.title);
-        if (seen.includes(n)) continue;
-        seen.push(n);
-        pushTo(sym, a);
+  // ---- symbol universe: SEED + every symbol the analyst model covers ------
+  const wanted = new Map<string, string>(); // symbol -> name
+  for (const s of SEED) wanted.set(s.symbol, s.name);
+  if (existsSync(ANALYSIS_FILE)) {
+    try {
+      const a = JSON.parse(readFileSync(ANALYSIS_FILE, 'utf8')) as { stocks?: Record<string, any> };
+      if (a.stocks) {
+        for (const [sym, e] of Object.entries(a.stocks)) {
+          if (!sym || wanted.has(sym)) continue;
+          wanted.set(sym, typeof e?.name === 'string' ? e.name : sym);
+        }
       }
-      await new Promise((r) => setTimeout(r, 120));
+    } catch {
+      // ignore corrupt analysis file
     }
   }
+
+  const max = Number(process.env.NEWS_MAX_SYMBOLS ?? (wanted.size > 150 ? 150 : wanted.size));
+  const symbols = [...wanted.entries()].slice(0, max);
+
+  // ---- parallel live fetch (pooled) --------------------------------------
+  const tasks: { sym: string; name: string; queries: string[] }[] = [];
+  for (const [sym, name] of symbols) {
+    const tokens = significantTokens(name, sym);
+    tasks.push({
+      sym,
+      name,
+      queries: [
+        `"${name}" stock NSE`,
+        `"${name}" OR "${sym}" NSE law suit OR fraud OR scam OR SEBI OR CBI OR ED OR court OR FIR OR investigation OR penalty`,
+        `${sym} NS news India market`,
+      ],
+    });
+  }
+
+  let fetched = 0;
+  let cursor = 0;
+  const worker = async () => {
+    while (true) {
+      const idx = cursor;
+      cursor += 1;
+      if (idx >= tasks.length) return;
+      const task = tasks[idx];
+      const tokens = significantTokens(task.name, task.sym);
+      const seen: string[] = [];
+      for (const q of task.queries) {
+        const hits = await fetchRss(q);
+        fetched += hits.length;
+        for (const a of hits) {
+          if (!looksRelevant(a.title, tokens)) continue;
+          const n = normalize(a.title);
+          if (seen.includes(n)) continue;
+          seen.push(n);
+          pushTo(task.sym, a);
+        }
+        await new Promise((r) => setTimeout(r, 60));
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(POOL_SIZE, tasks.length) }, worker));
 
   const items: Record<string, Article[]> = {};
   for (const sym of Object.keys(merged)) {
@@ -162,7 +207,7 @@ async function main(): Promise<void> {
     JSON.stringify({ generatedAt: new Date().toISOString(), symbols: Object.keys(items).length, items }, null, 0),
   );
 
-  console.log(`news: ${Object.keys(items).length} symbols with news (raw fetched=${fetched}), 7-day window, max ${PER_SYMBOL}/symbol`);
+  console.log(`news: ${Object.keys(items).length} symbols with news (live fetched=${fetched}/${tasks.length}), 7-day window, max ${PER_SYMBOL}/symbol`);
 }
 
 main().catch((e) => {

@@ -2,11 +2,15 @@ name: Backend Automation
 
 on:
   schedule:
-    # Every 30 min. The monitored window exits early once the engine is
-    # trading, so typical runs cost ~4-6 min instead of the old fixed 10+.
-    - cron: '*/30 * * * *'
-    # Once-a-day deep run (also survives if the 30-min cadence is ever removed)
-    - cron: '0 3 * * *'
+    # Market-hours news runs: every 2 hours during the NSE cash session
+    # (10:00 / 12:00 / 14:00 IST, Mon–Fri). Cheap: Google News RSS + a small
+    # symbol cap — no DB, no services. Prices stream separately via the
+    # frontend /api/live + /api/chart relays.
+    - cron: '30 4,6,8 * * 1-5'
+    # Once-a-day deep run (03:00 IST): strategy window + report + fundamentals
+    # (DB seed + nightly market-cap-ordered coverage batch) + management +
+    # full-set news. Also promotes the snapshot to main.
+    - cron: '30 21 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -65,6 +69,14 @@ jobs:
       REAL_DATA: '1'
 
     steps:
+      - name: Resolve run mode
+        run: |
+          if [ "${{ github.event.schedule }}" = "30 4,6,8 * * 1-5" ]; then
+            echo "MODE=news" >> "$GITHUB_ENV"
+          else
+            echo "MODE=full" >> "$GITHUB_ENV"
+          fi
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
@@ -75,10 +87,20 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
+      # ---- market-hours news only (no DB / services / fundamentals) -------
+      - name: Refresh per-stock news (market hours)
+        if: env.MODE == 'news'
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/news.ts
+        env:
+          NEWS_MAX_SYMBOLS: '40'
+
+      # ---- full pipeline (once a day + manual) ----------------------------
       - name: Apply database schema
+        if: env.MODE == 'full'
         run: node node_modules/tsx/dist/cli.mjs scripts/db/apply-schema.ts
 
       - name: Start backend services
+        if: env.MODE == 'full'
         run: |
           mkdir -p .infra/logs
           for svc in market-data fundamentals news algorithm-engine executor api; do
@@ -88,6 +110,7 @@ jobs:
           done
 
       - name: Wait for services to initialize
+        if: env.MODE == 'full'
         run: |
           for i in $(seq 1 120); do
             if curl -sf http://127.0.0.1:8080/api/health > /dev/null 2>&1; then
@@ -101,6 +124,7 @@ jobs:
           exit 1
 
       - name: Verify pipeline boot
+        if: env.MODE == 'full'
         run: |
           echo "=== Health ==="
           curl -sf http://127.0.0.1:8080/api/health | jq .
@@ -110,26 +134,39 @@ jobs:
       # Monitored window: polls the DB, exits early once strategies produce
       # signals AND the executor trades. Fails loudly if the brain is silent.
       - name: Run pipeline window (monitored)
+        if: env.MODE == 'full'
         run: node node_modules/tsx/dist/cli.mjs scripts/ci/monitor.ts
 
       - name: Generate report + UI snapshot
+        if: env.MODE == 'full'
         run: node node_modules/tsx/dist/cli.mjs scripts/ci/report.ts
 
-      # Deep fundamentals: pulls real company data from Yahoo quoteSummary and
-      # scores every stock with Buffett / Peter Lynch / Graham screens. Writes
-      # frontend/public/analysis.json for the deployed UI (baked into snapshot).
+      # Carry the previous run's analysis forward (the nightly batch grows the
+      # coverage set monotonically; this file is the source of truth).
+      - name: Pre-stage previous analyst model
+        if: env.MODE == 'full'
+        run: |
+          curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/analysis.json \
+            -o frontend/public/analysis.json || echo "no previous analysis to carry"
+
+      # Deep fundamentals: DB seed + next market-cap-ordered coverage batch
+      # from universe.json (COVERAGE_BATCH, default 40/night) -> analysis.json
       - name: Generate fundamentals & analyst model
+        if: env.MODE == 'full'
         run: node node_modules/tsx/dist/cli.mjs scripts/ci/fundamentals.ts
 
-      # Management analysis: officers + litigation scan (criminal/civil/
-      # regulatory) per company, appended to analysis.json as `management`.
+      # Management analysis: officers + litigation scan appended to analysis.json.
       - name: Generate management analysis
+        if: env.MODE == 'full'
         run: node node_modules/tsx/dist/cli.mjs scripts/ci/management.ts
 
-      # Per-stock news: Google News RSS, merged with the previous 7-day window
-      # into frontend/public/news.json.
-      - name: Refresh per-stock news
+      # Per-stock news for the whole covered set (Google News RSS), merged with
+      # the previous 7-day window into frontend/public/news.json.
+      - name: Refresh per-stock news (deep run)
+        if: env.MODE == 'full'
         run: node node_modules/tsx/dist/cli.mjs scripts/ci/news.ts
+        env:
+          NEWS_MAX_SYMBOLS: '150'
 
       - name: Job summary
         if: always()
@@ -144,7 +181,7 @@ jobs:
           fi
 
       - name: Upload service logs
-        if: always()
+        if: env.MODE == 'full'
         uses: actions/upload-artifact@v4
         with:
           name: backend-logs-${{ github.run_id }}
@@ -160,20 +197,21 @@ jobs:
           retention-days: 30
           if-no-files-found: ignore
 
-      # Audit trail: every run commits its report + UI snapshot to the
-      # `automation-data` branch (the deployed UI reads the latest snapshot
-      # straight from there — no redeploy needed). Once a day (and on manual
-      # runs) the snapshot is also promoted to `main` so the bundled fallback
-      # stays fresh.
+      # Audit trail: commit the run's artifacts to `automation-data` (the
+      # deployed UI reads the latest snapshot straight from there — no redeploy
+      # needed). Market-hours runs only touch news.json; deep runs also bump
+      # snapshot/analysis and promote to main daily / on manual runs.
       - name: Commit audit trail & UI snapshot
         run: |
           git config user.name "automation-bot"
           git config user.email "actions@github.com"
           mkdir -p reports
-          ts=$(date -u +%Y%m%d-%H%M%S)
-          cp scripts/ci/report-latest.json "reports/run-$ts-$GITHUB_RUN_ID.json"
-          cp scripts/ci/report-latest.json reports/latest.json
-          git add reports/
+          if [ "${{ env.MODE }}" = "full" ]; then
+            ts=$(date -u +%Y%m%d-%H%M%S)
+            cp scripts/ci/report-latest.json "reports/run-$ts-$GITHUB_RUN_ID.json" 2>/dev/null || true
+            cp scripts/ci/report-latest.json reports/latest.json 2>/dev/null || true
+            git add reports/ 2>/dev/null || true
+          fi
           git add frontend/public/snapshot.json 2>/dev/null || true
           git add frontend/public/analysis.json 2>/dev/null || true
           git add frontend/public/news.json 2>/dev/null || true
@@ -185,6 +223,6 @@ jobs:
           # automation-data is an append-only artifact branch — concurrent runs
           # can race, so force the ref to the latest snapshot (last-writer-wins).
           git push --force origin HEAD:automation-data
-          if [ "${{ github.event.schedule }}" = "0 3 * * *" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ "${{ env.MODE }}" = "full" ] && { [ "${{ github.event.schedule }}" = "30 21 * * *" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; }; then
             git push origin HEAD:main || echo "main moved concurrently — snapshot stays on automation-data branch"
           fi

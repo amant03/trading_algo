@@ -12,7 +12,8 @@
     "api/live.ts": { "maxDuration": 30 },
     "api/chart.ts": { "maxDuration": 30 },
     "api/search.ts": { "maxDuration": 15 },
-    "api/news.ts": { "maxDuration": 15 }
+    "api/news.ts": { "maxDuration": 15 },
+    "api/funda.ts": { "maxDuration": 30 }
   },
   "headers": [
     {

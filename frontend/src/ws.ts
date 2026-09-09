@@ -134,6 +134,8 @@ export const useLive = create<LiveState>((set, get) => ({
     const next = had ? cur.filter((s) => s !== sym) : [...cur, sym];
     set({ watchlist: next });
     saveWatchlist(next);
+    // watchlisted symbols get priority on-demand fundamentals immediately
+    if (!had) void ensureFundamentals([sym]);
     // best-effort server sync — never blocks or errors the UI on the static
     // deploy (there is no backend, so /api/watchlist 404s; local wins).
     if (!had) post(`/api/watchlist/${encodeURIComponent(sym)}`, {}).catch(() => {});
@@ -554,6 +556,37 @@ async function loadAnalysis(): Promise<boolean> {
   return true;
 }
 
+// ---- on-demand fundamentals ----------------------------------------------
+// Fills the gaps the nightly batch hasn't reached yet by asking the
+// /api/funda relay (free Yahoo data). Watchlisted/previously viewed stocks are
+// prioritised automatically — no clicks required. Prices keep streaming via
+// the /api/live + /api/chart relays regardless.
+
+const fundaFetching = new Set<string>();
+
+export async function ensureFundamentals(symbols: string[]): Promise<void> {
+  const missing = [...new Set(symbols.map((s) => s.trim().toUpperCase()).filter(Boolean))].filter(
+    (s) => !useLive.getState().fundamentals[s] && !fundaFetching.has(s),
+  );
+  if (!missing.length) return;
+  for (const s of missing) fundaFetching.add(s);
+  try {
+    for (let i = 0; i < missing.length; i += 8) {
+      const batch = missing.slice(i, i + 8);
+      try {
+        const res = await fetch(`/api/funda?symbols=${encodeURIComponent(batch.join(','))}`, { cache: 'no-store' });
+        if (!res.ok) continue;
+        const data = (await res.json()) as { stocks?: Record<string, StockAnalysis> };
+        if (data?.stocks) useLive.getState().setAnalysis(data.stocks, {});
+      } catch {
+        // relay hiccup — a later ensure call retries
+      }
+    }
+  } finally {
+    for (const s of missing) fundaFetching.delete(s);
+  }
+}
+
 async function loadCiSnapshot(): Promise<boolean> {
   const data = await loadJson<{
     generatedAt?: string;
@@ -604,7 +637,12 @@ export function connectLive() {
   setInterval(() => {
     void loadNews();
     void loadAnalysis();
+    ensureFundamentals(useLive.getState().watchlist.slice(0, 12));
   }, 600_000);
+  // watchlist edits trigger on-demand fundamentals for the newly added symbol
+  useLive.subscribe((st, prev) => {
+    if (st.watchlist !== prev.watchlist) void ensureFundamentals(st.watchlist.slice(0, 12));
+  });
 
   const staticHost = import.meta.env.PROD && !import.meta.env.VITE_WS_URL;
   if (staticHost) return;

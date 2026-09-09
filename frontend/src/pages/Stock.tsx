@@ -1,7 +1,7 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { get } from '../api';
-import { useLive, refreshSymbols, fetchRelayNews } from '../ws';
+import { useLive, refreshSymbols, fetchRelayNews, ensureFundamentals } from '../ws';
 import { fmt, fmtPct, fmtCompact, fmtMoney, cls } from '../format';
 import { useToast } from '../components/Toasts';
 import { DirectionBadge, GradeBadge } from '../components/Badge';
@@ -434,6 +434,9 @@ export default function Stock() {
     setOvRange('1d');
     setDayRows([]);
     void refreshSymbols([upper]);
+    // any symbol — inside or outside the nightly universe — gets full
+    // fundamentals/AI/competition data on demand via the free relay
+    void ensureFundamentals([upper]);
     void fetchRelayNews(upper).then((arts) => {
       if (arts.length) setStockNewsArt(arts);
     });
