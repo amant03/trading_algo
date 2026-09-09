@@ -22,6 +22,7 @@ export interface Metrics {
   ps: number | null;
   peg: number | null;
   roe: number | null;
+  roce: number | null;
   roa: number | null;
   netMargin: number | null;
   operatingMargin: number | null;
@@ -203,6 +204,7 @@ export function emptyMetrics(symbol: string, meta?: Partial<Pick<Metrics, 'name'
     ps: null,
     peg: null,
     roe: null,
+    roce: null,
     roa: null,
     netMargin: null,
     operatingMargin: null,
@@ -314,6 +316,55 @@ export function extractCompanion(
     if (typeof d === 'string') quarterEnd = d;
   }
   return { peers, quarterEnd };
+}
+
+// ---- Screener.in real competitor listings -----------------------------------
+//
+// Yahoo's `esgScores.peers` is unreliable, so the REAL peers come from
+// Screener.in. Its company page (static HTML) carries a `warehouse-id`, and the
+// peer-comparison table is served from /api/company/{warehouseId}/peers/ — the
+// rows list the genuine comparable listed companies (TCS, HCLTECH, WIPRO, ...).
+// Used by the nightly batch AND the on-demand relay; falls back to industry /
+// sector peers when Screener is unreachable.
+
+const SCREENER_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36';
+
+async function screenerGet(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': SCREENER_UA, Accept: 'text/html,application/xhtml+xml' },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return null;
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
+export async function screenerWarehouseId(symbol: string): Promise<string | null> {
+  const html = await screenerGet(`https://www.screener.in/company/${encodeURIComponent(symbol)}/`);
+  if (!html) return null;
+  const m = html.match(/warehouse-id="(\d+)"/);
+  return m ? m[1] : null;
+}
+
+/** Real competitor symbols for a company, from Screener.in's peer table. */
+export async function screenerPeers(symbol: string): Promise<string[]> {
+  const warehouseId = await screenerWarehouseId(symbol);
+  if (!warehouseId) return [];
+  const html = await screenerGet(`https://www.screener.in/api/company/${warehouseId}/peers/`);
+  if (!html) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const m of html.matchAll(/\/company\/([A-Z][A-Z0-9_\-]{0,19})\//g)) {
+    const p = m[1].toUpperCase();
+    if (p === symbol || seen.has(p)) continue;
+    seen.add(p);
+    out.push(p);
+  }
+  return out;
 }
 
 // ---- Screens -------------------------------------------------------------
@@ -594,6 +645,7 @@ export function buildEntry(opts: {
       ps: m.ps == null ? null : Math.round(m.ps * 100) / 100,
       peg: m.peg == null ? null : Math.round(m.peg * 100) / 100,
       roe: m.roe == null ? null : Math.round(m.roe * 10) / 10,
+      roce: m.roce == null ? null : Math.round(m.roce * 10) / 10,
       roa: m.roa == null ? null : Math.round(m.roa * 10) / 10,
       netMargin: m.netMargin == null ? null : Math.round(m.netMargin * 10) / 10,
       operatingMargin: m.operatingMargin == null ? null : Math.round(m.operatingMargin * 10) / 10,

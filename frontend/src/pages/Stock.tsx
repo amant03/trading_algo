@@ -404,6 +404,26 @@ export default function Stock() {
   const [dayLoading, setDayLoading] = useState(true);
   const [aiPrompt, setAiPrompt] = useState<string | null>(null);
 
+  const [importState, setImportState] = useState<'idle' | 'busy' | 'queued' | 'error'>('idle');
+  const requestImport = async () => {
+    if (importState === 'busy' || importState === 'queued') return;
+    setImportState('busy');
+    try {
+      const r = await fetch(`/api/import?symbol=${encodeURIComponent(upper)}`, { cache: 'no-store' });
+      const j = (await r.json().catch(() => null)) as { queued?: boolean; error?: string; detail?: string } | null;
+      if (r.ok && j?.queued) {
+        setImportState('queued');
+        toast(`Import queued — ${upper} will be fully covered in ~2 minutes`, 'ok');
+      } else {
+        setImportState('error');
+        toast(j?.error ?? `Import failed${j?.detail ? `: ${j.detail}` : ''}`, 'err');
+      }
+    } catch {
+      setImportState('error');
+      toast('Import request failed — is the deployed relay reachable?', 'err');
+    }
+  };
+
   const snap: Snapshot | undefined = snapshots[upper];
   const analysis: StockAnalysis | undefined = fundamentals[upper];
   const watch = watchlist.includes(upper);
@@ -717,22 +737,36 @@ export default function Stock() {
                 <div className="ratio-grid" style={{ marginBottom: 14 }}>
                   <div className="ratio"><div className="k">P/E</div><div className="v">{analysis.metrics.pe?.toFixed(1) ?? '—'}</div></div>
                   <div className="ratio"><div className="k">P/B</div><div className="v">{analysis.metrics.pb?.toFixed(1) ?? '—'}</div></div>
+                  <div className="ratio"><div className="k">P/S</div><div className="v">{analysis.metrics.ps?.toFixed(2) ?? '—'}</div></div>
                   <div className="ratio"><div className="k">PEG</div><div className="v">{analysis.metrics.peg?.toFixed(2) ?? '—'}</div></div>
                   <div className="ratio"><div className="k">ROE</div><div className="v">{analysis.metrics.roe?.toFixed(1) ?? '—'}%</div></div>
+                  <div className="ratio"><div className="k">ROCE</div><div className="v">{analysis.metrics.roce?.toFixed(1) ?? '—'}%</div></div>
                   <div className="ratio"><div className="k">ROA</div><div className="v">{analysis.metrics.roa?.toFixed(1) ?? '—'}%</div></div>
                   <div className="ratio"><div className="k">Growth</div><div className="v">{analysis.metrics.growth?.toFixed(1) ?? '—'}%</div></div>
-                  <div className="ratio"><div className="k">Net Marg</div><div className="v">{analysis.metrics.netMargin?.toFixed(1) ?? '—'}%</div></div>
+                  <div className="ratio"><div className="k">Rev Gth</div><div className="v">{analysis.metrics.revenueGrowth?.toFixed(1) ?? '—'}%</div></div>
+                  <div className="ratio"><div className="k">Net Mar</div><div className="v">{analysis.metrics.netMargin?.toFixed(1) ?? '—'}%</div></div>
+                  <div className="ratio"><div className="k">Op Mar</div><div className="v">{analysis.metrics.operatingMargin?.toFixed(1) ?? '—'}%</div></div>
+                  <div className="ratio"><div className="k">Gross Mar</div><div className="v">{analysis.metrics.grossMargin?.toFixed(1) ?? '—'}%</div></div>
                   <div className="ratio"><div className="k">D/E</div><div className="v">{analysis.metrics.debtToEquity?.toFixed(2) ?? '—'}</div></div>
+                  <div className="ratio"><div className="k">Cur Ratio</div><div className="v">{analysis.metrics.currentRatio?.toFixed(2) ?? '—'}</div></div>
+                  <div className="ratio"><div className="k">Qk Ratio</div><div className="v">{analysis.metrics.quickRatio?.toFixed(2) ?? '—'}</div></div>
                   <div className="ratio"><div className="k">EPS</div><div className="v">{fmt(analysis.metrics.eps)}</div></div>
                   <div className="ratio"><div className="k">BV/Sh</div><div className="v">{fmt(analysis.metrics.bookValue)}</div></div>
                   <div className="ratio"><div className="k">Beta</div><div className="v">{analysis.metrics.beta?.toFixed(2) ?? '—'}</div></div>
                   <div className="ratio"><div className="k">Div Yld</div><div className="v">{analysis.metrics.dividendYield?.toFixed(2) ?? '—'}%</div></div>
+                  <div className="ratio"><div className="k">Mkt Cap</div><div className="v">{analysis.marketCap ? fmtCompact(analysis.marketCap) : '—'}</div></div>
                 </div>
-                {analysis.metrics.promoterHolding != null && (
-                  <div className="dim" style={{ fontSize: 11, marginBottom: 4 }}>
-                    Promoter holding {analysis.metrics.promoterHolding}% · FII holding {analysis.metrics.fiiHolding ?? 0}% · 52-wk {fmt(analysis.metrics.fiftyTwoWeekLow)}–{fmt(analysis.metrics.fiftyTwoWeekHigh)}
-                  </div>
-                )}
+                <div className="dim" style={{ fontSize: 11, lineHeight: 1.8, marginBottom: 4 }}>
+                  {instrument?.isin && <span>ISIN <span className="mono">{instrument.isin}</span> · </span>}
+                  {instrument?.exchange && <span>listed on {instrument.exchange}</span>}
+                  {analysis.metrics.promoterHolding != null && (
+                    <span> · Promoter {analysis.metrics.promoterHolding}% · FII {analysis.metrics.fiiHolding ?? 0}%</span>
+                  )}
+                  <span> · 52-wk {fmt(analysis.metrics.fiftyTwoWeekLow)}–{fmt(analysis.metrics.fiftyTwoWeekHigh)}</span>
+                  {analysis.metrics.targetMean != null && (
+                    <span> · Street target {fmt(analysis.metrics.targetMean)} ({analysis.metrics.analysts ?? 0} analysts)</span>
+                  )}
+                </div>
               </div>
 
               <div className="panel">
@@ -757,7 +791,27 @@ export default function Stock() {
             </div>
           ) : (
             <div className="panel">
-              <div className="empty">Fundamentals not generated yet — will appear after the next automation run.</div>
+              <div className="empty">
+                {upper} has no fundamental model yet — it can be added to platform coverage on demand.
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '2px 0 16px' }}>
+                <button
+                  className="btn primary"
+                  disabled={importState === 'busy' || importState === 'queued'}
+                  onClick={requestImport}
+                >
+                  {importState === 'queued' ? 'Import queued — refresh in ~2 min' : importState === 'busy' ? 'Queuing…' : `Import ${upper} into coverage`}
+                </button>
+                <div className="hint">
+                  Runs a small automation that fetches real fundamentals, Screener.in competitors &amp; the last 7 days of
+                  news, then publishes it for everyone. Instant view still works below the banner meanwhile.
+                </div>
+                {importState === 'error' && (
+                  <div className="dim" style={{ color: 'var(--down)', fontSize: 11.5 }}>
+                    The last import attempt failed — you can retry, or the nightly coverage batch will reach this symbol eventually.
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>

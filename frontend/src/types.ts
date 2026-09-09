@@ -237,6 +237,7 @@ export interface StockAnalysisMetrics {
   ps: number | null;
   peg: number | null;
   roe: number | null;
+  roce: number | null;
   roa: number | null;
   netMargin: number | null;
   operatingMargin: number | null;
@@ -256,6 +257,10 @@ export interface StockAnalysisMetrics {
   avgVolume: number | null;
   promoterHolding: number | null;
   fiiHolding: number | null;
+  targetLow: number | null;
+  targetMean: number | null;
+  targetHigh: number | null;
+  analysts: number | null;
 }
 
 export interface StockOpinion {

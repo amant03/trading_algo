@@ -1,0 +1,51 @@
+name: Import Symbol
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbol:
+        description: NSE symbol to bring into full platform coverage
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      # Carry the current analysis + news forward from the artifact branch.
+      - name: Pre-stage analysis + news
+        run: |
+          curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/analysis.json \
+            -o frontend/public/analysis.json || echo "no analysis yet"
+          curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/news.json \
+            -o frontend/public/news.json || echo "no news yet"
+
+      - name: Import symbol
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/import-stock.ts
+        env:
+          IMPORT_SYMBOL: ${{ github.event.inputs.symbol }}
+
+      - name: Commit to automation-data
+        run: |
+          git config user.name "automation-bot"
+          git config user.email "actions@github.com"
+          git add frontend/public/analysis.json frontend/public/news.json 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "Nothing new to commit"
+            exit 0
+          fi
+          git commit -m "chore(import): add ${{ github.event.inputs.symbol }} to platform coverage"
+          git push --force origin HEAD:automation-data

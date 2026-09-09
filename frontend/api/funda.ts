@@ -10,7 +10,7 @@
 //
 // GET /api/funda?symbols=RELIANCE,TCS   (comma list, max 8)
 
-import { makeYahoo, emptyMetrics, applyYahoo, extractCompanion, buildEntry } from '../src/lib/funda';
+import { makeYahoo, emptyMetrics, applyYahoo, extractCompanion, buildEntry, screenerPeers } from '../src/lib/funda';
 import { jsonHeaders, NSE_UNIVERSE } from './chart';
 
 interface UniverseRow {
@@ -46,7 +46,22 @@ async function loadUniverse(base: string): Promise<Map<string, UniverseRow>> {
   return map;
 }
 
-function peersFor(symbol: string, universe: Map<string, UniverseRow>): { symbol: string; name: string | null; industry: null; sector: null }[] {
+async function peersFor(
+  symbol: string,
+  universe: Map<string, UniverseRow>,
+): Promise<{ symbol: string; name: string | null; industry: null; sector: string | null }[]> {
+  // Real competitors from Screener.in's peer table first.
+  try {
+    const scr = await screenerPeers(symbol);
+    if (scr.length) {
+      return scr.slice(0, 8).map((p) => {
+        const u = universe.get(p);
+        return { symbol: p, name: u?.name ?? null, industry: null as null, sector: u?.cap ?? null };
+      });
+    }
+  } catch {
+    // fall through to market-cap proximity
+  }
   const me = universe.get(symbol);
   if (!me) {
     return NSE_UNIVERSE.filter((s) => s.symbol !== symbol)
@@ -93,7 +108,7 @@ export async function GET(request: Request): Promise<Response> {
           name: m.name ?? sym,
           m,
           price: m.price,
-          peers: peersFor(sym, universe),
+          peers: await peersFor(sym, universe),
           quarterEnd: extractCompanion(yahooData).quarterEnd,
         });
         cache.set(sym, { at: Date.now(), hash: JSON.stringify(entry) });

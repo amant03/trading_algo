@@ -34,6 +34,7 @@ import {
   emptyMetrics,
   applyYahoo,
   extractCompanion,
+  screenerPeers,
   makeYahoo,
   buildEntry,
   reportLinks,
@@ -83,6 +84,7 @@ function metricsFromRow(r: Row, price: number) {
   if (r.ps != null) m.ps = Number(r.ps);
   if (r.peg != null) m.peg = Number(r.peg);
   if (r.roe != null) m.roe = Number(r.roe);
+  if (r.roce != null) m.roce = Number(r.roce);
   if (r.roa != null) m.roa = Number(r.roa);
   if (r.net_margin != null) m.netMargin = Number(r.net_margin);
   if (r.operating_margin != null) m.operatingMargin = Number(r.operating_margin);
@@ -264,22 +266,61 @@ async function main(): Promise<void> {
     if (sec) (bySector.get(sec) ?? bySector.set(sec, []).get(sec)!).push(sym);
   }
 
+  // Real competitors from Screener.in's peer table (pooled, best-effort —
+  // Yahoo's esgScores.peers was garbage and its role is demoted to a last
+  // resort below).
+  const screenerPeersPer: Record<string, string[]> = {};
+  {
+    const syms = [...allSyms].sort();
+    let cursor = 0;
+    const worker = async () => {
+      while (true) {
+        const idx = cursor;
+        cursor += 1;
+        if (idx >= syms.length) return;
+        const sym = syms[idx];
+        try {
+          const p = await screenerPeers(sym);
+          if (p.length) screenerPeersPer[sym] = p;
+        } catch {
+          // keep default industry/sector fallback
+        }
+        await new Promise((r) => setTimeout(r, 40));
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(6, syms.length) }, worker));
+  }
+
   for (const sym of allSyms) {
     const e = stocks[sym] as {
       industry?: string | null;
       sector?: string | null;
       name?: string;
       peers?: unknown;
+      reports?: unknown;
     };
     const peers = new Set<string>();
-    for (const p of yahooPeersPer[sym] ?? []) {
-      const clean = p.replace(/\.(NS|NSE|BO)$/i, '').toUpperCase();
-      if (allSyms.has(clean)) peers.add(clean);
-    }
     const ind = e.industry;
     const sec = e.sector;
+    // 1. Screener.in direct competitors (authoritative)
+    for (const p of screenerPeersPer[sym] ?? []) peers.add(p);
+    // 2. same-industry + same-sector augmentation to a full bucket
+    let filled = peers.size;
     for (const ext of [ind ? byIndustry.get(ind) : [], sec ? bySector.get(sec) : []]) {
-      for (const s of ext ?? []) if (s !== sym) peers.add(s);
+      for (const s of ext ?? []) {
+        if (s === sym || peers.has(s)) continue;
+        peers.add(s);
+        filled += 1;
+        if (filled >= 9) break;
+      }
+      if (filled >= 9) break;
+    }
+    // 3. Yahoo ESG peers as a last resort only (often wrong — filtered hard)
+    if (!peers.size) {
+      for (const p of yahooPeersPer[sym] ?? []) {
+        const clean = p.replace(/\.(NS|NSE|BO)$/i, '').toUpperCase();
+        if (allSyms.has(clean)) peers.add(clean);
+      }
     }
     e.peers = [...peers]
       .sort((a, b) => a.localeCompare(b))
