@@ -180,10 +180,16 @@ export default function AdvChart({
           height={h}
           viewBox={`0 0 ${Math.max(w, 1)} ${h}`}
           preserveAspectRatio="none"
+          style={{ width: '100%', height: h, display: 'block' }}
           onMouseMove={(e) => {
           const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
-          const px = ((e.clientX - rect.left - PAD_L) / plotW) * (rows.length - 1);
-          setHoverI(px >= 0 && px <= rows.length - 1 ? Math.round(px) : null);
+          if (rect.width <= 0 || rows.length <= 0) return;
+          // Map CSS pixels into viewBox space so the crosshair matches the
+          // candle under the cursor even when the SVG is stretched (preserveAspectRatio=none).
+          const viewX = ((e.clientX - rect.left) / rect.width) * Math.max(w, 1);
+          const t = (viewX - PAD_L) / plotW;
+          const i = Math.round(t * Math.max(rows.length - 1, 1));
+          setHoverI(i >= 0 && i < rows.length ? i : null);
         }}>
           <defs>
             <linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
@@ -259,8 +265,8 @@ export default function AdvChart({
 
           {hrow && hoverI != null && (
             <g>
-              <line x1={x(hoverI)} x2={x(hoverI)} y1={PAD_T} y2={h - FOOTER} stroke="rgba(232,239,246,0.35)" strokeWidth="1" />
-              <circle cx={x(hoverI)} cy={y(hrow.c)} r="3.5" fill={stroke} />
+              <line x1={x(hoverI)} x2={x(hoverI)} y1={PAD_T} y2={h - FOOTER} stroke="rgba(232,239,246,0.55)" strokeWidth="1" />
+              <circle cx={x(hoverI)} cy={y(hrow.c)} r="3.5" fill={stroke} stroke="#0b0f17" strokeWidth="1" />
             </g>
           )}
         </svg>

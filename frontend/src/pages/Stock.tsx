@@ -556,6 +556,32 @@ export default function Stock() {
         ))}
       </div>
 
+      {(!analysis || (!analysis.financials && tab === 'fundamentals') || (tab === 'news' && !stockNewsArt.length && !stockNews.length) || (tab === 'technical' && !dayLoading && !dayRows.length)) && (
+        <div className="panel" style={{ marginBottom: 14, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>
+              {!analysis
+                ? `${upper} is not in platform coverage yet`
+                : tab === 'technical'
+                  ? `No technical candles stored for ${upper}`
+                  : tab === 'news'
+                    ? `No news imported for ${upper} yet`
+                    : `${upper} is missing Screener financials`}
+            </div>
+            <div className="hint">
+              Import fetches fundamentals, competitors and recent news and publishes them for every visitor — not just this session.
+            </div>
+          </div>
+          <button
+            className="btn primary"
+            disabled={importState === 'busy' || importState === 'queued'}
+            onClick={requestImport}
+          >
+            {importState === 'queued' ? 'Import queued' : importState === 'busy' ? 'Queuing…' : `Import ${upper}`}
+          </button>
+        </div>
+      )}
+
       {tab === 'overview' && (
         <div>
           <div className="grid-2-1" style={{ marginBottom: 16 }}>

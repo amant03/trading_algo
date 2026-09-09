@@ -36,6 +36,12 @@ interface TradeRow {
   price: number;
   pnl: number;
   reason: string;
+  entryPrice?: number;
+  stopLoss?: number;
+  trailStop?: number;
+  retPct?: number | null;
+  exitClass?: string;
+  story?: string;
 }
 
 interface PaperReport {
@@ -52,9 +58,13 @@ interface PaperReport {
   dayPnl: number;
   totalReturnPct: number;
   tradingDays: number;
+  slPct?: number;
+  trailPct?: number;
+  maxHoldDays?: number;
   strategies: StrategyRow[];
   openPositions: PosRow[];
   recentTrades: TradeRow[];
+  transactions?: TradeRow[];
   history: { date: string; equity: number; cash: number; invested: number }[];
 }
 
@@ -240,26 +250,40 @@ export default function Paper() {
 
           <div className="panel reveal">
             <div className="panel-title">
-              <h3>Recent activity</h3>
-              <span className="hint">entry on BUY signal · exit on SELL / trailing stop / 20-day hold</span>
+              <h3>Full transaction list</h3>
+              <span className="hint">
+                every fill · 8% hard stop · 12% trailing stop · 20-day max hold
+                {r.slPct ? ` · SL ${(r.slPct * 100).toFixed(0)}%` : ''}
+              </span>
             </div>
-            <div className="table">
+            <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.55, padding: '0 4px 10px' }}>
+              Think of each method as a separate ₹20,000 envelope. A <b>BUY</b> spends the envelope on one stock when its rule fires.
+              A <b>SELL</b> is either the rule reversing, the 8% safety-net (stop-loss) cutting a loser, the trailing stop locking a winner,
+              or the 20-day time limit recycling the cash. The “plain English” column is the same decision, without the jargon.
+            </div>
+            <div className="table paper-ledger">
               <div className="tr head">
-                <span>Day</span><span>Method</span><span>Symbol</span><span>Side</span><span>Qty</span><span>Price</span><span>P&L</span><span>Why</span>
+                <span>Day</span><span>Method</span><span>Symbol</span><span>Side</span><span>Qty</span><span>Price</span><span>Stop</span><span>P&amp;L</span><span>Why</span>
               </div>
-              {r.recentTrades.map((t, i) => (
-                <div className="tr" key={`${t.day}-${t.strategy}-${t.symbol}-${i}`}>
-                  <span className="mono muted">{t.day}</span>
-                  <span className="muted">{t.strategy}</span>
-                  <span className="mono">{t.symbol}</span>
-                  <span className={t.side === 'BUY' ? 'up' : 'down'}>{t.side}</span>
-                  <span className="mono">{t.qty}</span>
-                  <span className="mono">{inr(t.price, 2)}</span>
-                  <span className={clsPnL(t.pnl)}>{t.side === 'SELL' ? inr(t.pnl) : '—'}</span>
-                  <span className="muted" style={{ fontSize: 12 }}>{t.reason}</span>
+              {(r.transactions ?? r.recentTrades).map((t, i) => (
+                <div key={`${t.day}-${t.strategy}-${t.symbol}-${i}`}>
+                  <div className="tr">
+                    <span className="mono muted">{t.day}</span>
+                    <span className="muted">{t.strategy}</span>
+                    <span className="mono">{t.symbol}</span>
+                    <span className={t.side === 'BUY' ? 'up' : 'down'}>{t.side}</span>
+                    <span className="mono">{t.qty}</span>
+                    <span className="mono">{inr(t.price, 2)}</span>
+                    <span className="mono muted">{t.stopLoss != null ? inr(t.stopLoss, 2) : '—'}</span>
+                    <span className={clsPnL(t.pnl)}>{t.side === 'SELL' ? `${inr(t.pnl)}${t.retPct != null ? ` (${t.retPct >= 0 ? '+' : ''}${t.retPct}%)` : ''}` : '—'}</span>
+                    <span className="muted" style={{ fontSize: 12 }}>{t.reason}</span>
+                  </div>
+                  {t.story && (
+                    <div className="paper-story">{t.story}</div>
+                  )}
                 </div>
               ))}
-              {!r.recentTrades.length && <div className="empty">No trades yet — first run opens positions from the seed window.</div>}
+              {!(r.transactions ?? r.recentTrades).length && <div className="empty">No trades yet — first run opens positions from the seed window.</div>}
             </div>
           </div>
         </div>

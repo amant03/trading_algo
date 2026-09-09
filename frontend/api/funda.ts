@@ -374,17 +374,16 @@ export async function screenerPeers(symbol: string): Promise<string[]> {
 
 // ---- Screener.in real ratio & financials engine ----------------------------
 //
-// Screener is the authoritative public source for Indian fundamentals. Its
-// company pages expose per-year P&L, Balance Sheet and ratio tables plus a top
-// ratio strip (Market Cap, P/E, Book Value, Dividend Yield, ROCE, ROE, ...).
-// Not every ratio has its own row for every company — Lodha shows only ROCE in
-// the ratios table — so the missing critical ratios (ROE, ROA, net margin,
-// growth, D/E, ...) are COMPUTED from the same Screener P&L / Balance Sheet,
-// guaranteeing they are present and correct even when Yahoo has no data.
-// Bank NPA is gated behind premium on Screener, so for banks/NBFCs we pull the
-// quarterly NPA block from Finology (ticker.finology.in), which is public.
+// Screener is the authoritative public source for Indian fundamentals.
+// URLs: consolidated = /company/SYM/consolidated/ ; standalone = /company/SYM/
+// (the /standalone/ path 404s). Row labels are taken from Company.showSchedule
+// anchors when present, else button/td text. Units (% / days / x) are parsed
+// from the cell and the label. Sparse ratio tables (Lodha publishes Debtor
+// Days + ROCE %, not ROE) are filled from the same page's P&L + Balance Sheet.
 
 export type ConsolidationView = 'consolidated' | 'standalone';
+export type RatioUnit = 'pct' | 'days' | 'x' | 'cr' | 'rs' | 'number';
+export type SectorKind = 'bank' | 'nbfc' | 'insurance' | 'realty' | 'generic';
 
 export interface ScreenerRange {
   label: string;
@@ -394,9 +393,16 @@ export interface ScreenerRange {
   y1: number | null;
 }
 
+export interface ScreenerRow {
+  label: string;
+  key: string;
+  unit: RatioUnit;
+  values: (number | null)[];
+}
+
 export interface ScreenerTable {
   years: string[];
-  rows: { label: string; values: (number | null)[] }[];
+  rows: ScreenerRow[];
 }
 
 export interface ScreenerYearMetrics {
@@ -425,33 +431,40 @@ export interface ScreenerDerived {
   earningsGrowth: number | null;
   debtToEquity: number | null;
   currentRatio: number | null;
+  quickRatio: number | null;
   interestCoverage: number | null;
   eps: number | null;
   sales: number | null;
   netProfit: number | null;
   netWorth: number | null;
   totalDebt: number | null;
+  debtorDays: number | null;
+  inventoryDays: number | null;
+  workingCapitalDays: number | null;
   byYear: ScreenerYearMetrics[];
+}
+
+export interface ScreenerSnapshot {
+  price: number | null;
+  marketCap: number | null;
+  pe: number | null;
+  pb: number | null;
+  bookValue: number | null;
+  dividendYield: number | null;
+  roce: number | null;
+  roe: number | null;
+  faceValue: number | null;
+  high: number | null;
+  low: number | null;
 }
 
 export interface ScreenerView {
   kind: ConsolidationView;
   exists: boolean;
-  snapshot: {
-    price: number | null;
-    marketCap: number | null;
-    pe: number | null;
-    pb: number | null;
-    bookValue: number | null;
-    dividendYield: number | null;
-    roce: number | null;
-    roe: number | null;
-    faceValue: number | null;
-    high: number | null;
-    low: number | null;
-  };
+  snapshot: ScreenerSnapshot;
   pl: ScreenerTable | null;
   bs: ScreenerTable | null;
+  cf: ScreenerTable | null;
   ratios: ScreenerTable | null;
   ranges: ScreenerRange[];
   derived: ScreenerDerived | null;
@@ -471,6 +484,7 @@ export interface ScreenerFundamentals {
   broadSector: string | null;
   sector: string | null;
   industry: string | null;
+  sectorKind: SectorKind;
   defaultView: ConsolidationView;
   views: Partial<Record<ConsolidationView, ScreenerView>>;
   bank: ScreenerBankRatios | null;
@@ -485,51 +499,107 @@ const deEnt = (s: string): string =>
     .replace(/&#39;/g, "'")
     .replace(/&nbsp;/g, ' ');
 
-/** Pull the number out of a Screener cell (Indian comma grouping, % signs, rupee glyphs). */
+/** Pull the number out of a Screener cell (Indian commas, %, ₹, blanks, NA). */
 function scrNum(text: string): number | null {
   const span = text.match(/<span class="number">([^<]*)<\/span>/);
-  const raw = deEnt(span ? span[1] : text.replace(/<[^>]+>/g, ''));
-  const m = raw.replace(/[,\s\u00a0]/g, '').match(/-?\d+(\.\d+)?/);
-  return m ? Number(m[0]) : null;
+  let raw = deEnt(span ? span[1] : text.replace(/<[^>]+>/g, ''));
+  raw = raw.replace(/[₹]/g, '').replace(/%/g, '').replace(/[,\s\u00a0]/g, '').trim();
+  if (!raw || raw === '-' || raw === '—' || /^n\/?a$/i.test(raw)) return null;
+  const m = raw.match(/^-?\d+(\.\d+)?/);
+  if (!m) return null;
+  const n = Number(m[0]);
+  return Number.isFinite(n) ? n : null;
 }
 
-function parseScreenerTable(html: string, sectionId: string): ScreenerTable | null {
-  const start = html.indexOf(`id="${sectionId}"`);
+export function normRatioKey(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/\+$/g, '')
+    .replace(/%/g, '')
+    .replace(/in rs\.?/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+export function unitFromLabel(label: string): RatioUnit {
+  const k = label.toLowerCase();
+  if (/%/.test(k) || /\b(roce|roe|roa|opm|npm|margin|yield|growth|npa|casa|tax|payout)\b/.test(k)) return 'pct';
+  if (/\bdays\b/.test(k) || /conversion cycle/.test(k)) return 'days';
+  if (/coverage|current ratio|quick ratio|debt to equity/.test(k)) return 'x';
+  if (/\beps\b/.test(k) || /book value|face value|current price/.test(k)) return 'rs';
+  return 'number';
+}
+
+function tableCells(rowHtml: string): { tag: string; attrs: string; content: string }[] {
+  const out: { tag: string; attrs: string; content: string }[] = [];
+  const re = /<(td|th)\b([^>]*)>([\s\S]*?)<\/\1>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(rowHtml))) {
+    out.push({ tag: m[1].toLowerCase(), attrs: m[2], content: m[3] });
+  }
+  return out;
+}
+
+function labelFromCell(content: string): string {
+  const sched = content.match(/showSchedule\(\s*'([^']+)'/);
+  if (sched) return deEnt(sched[1]).replace(/\+$/, '').replace(/\s+/g, ' ').trim();
+  const btn = content.match(/<button[^>]*>([\s\S]*?)<\/button>/i);
+  const raw = btn ? btn[1] : content;
+  return deEnt(raw.replace(/<[^>]+>/g, ''))
+    .replace(/\+$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function sliceSection(html: string, sectionId: string): string | null {
+  const needle = `id="${sectionId}"`;
+  const start = html.indexOf(needle);
   if (start < 0) return null;
   const tableStart = html.indexOf('<table', start);
   if (tableStart < 0) return null;
   const tableEnd = html.indexOf('</table>', tableStart);
   if (tableEnd < 0) return null;
-  const seg = html.slice(tableStart, tableEnd);
+  return html.slice(tableStart, tableEnd + 8);
+}
 
-  // capture open-tag attrs (data-date-key) AND content
-  const cellRe = /<t[dh]((?:"[^"]*"|[^"'>])*)>([\s\S]*?)<\/t[dh]>/g;
-  const theadM = seg.match(/<thead>([\s\S]*?)<\/thead>/);
-  const headers = theadM ? [...theadM[1].matchAll(cellRe)].map((c) => ({ attrs: c[1], content: c[2] })) : [];
+function parseScreenerTable(html: string, sectionId: string): ScreenerTable | null {
+  const seg = sliceSection(html, sectionId);
+  if (!seg) return null;
+
+  const theadM = seg.match(/<thead>([\s\S]*?)<\/thead>/i);
   const years: string[] = [];
-  for (let i = 1; i < headers.length; i += 1) {
-    const dk = headers[i].attrs.match(/data-date-key="([^"]+)"/);
-    const txt = deEnt(headers[i].content.replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim();
-    years.push(dk ? dk[1] : txt);
+  if (theadM) {
+    const headerCells = tableCells(theadM[1]);
+    for (let i = 1; i < headerCells.length; i += 1) {
+      const dk = headerCells[i].attrs.match(/data-date-key="([^"]+)"/);
+      const txt = deEnt(headerCells[i].content.replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim();
+      years.push(dk ? dk[1] : txt);
+    }
   }
 
-  const bodyM = seg.match(/<tbody>([\s\S]*?)<\/tbody>/);
+  const bodyM = seg.match(/<tbody>([\s\S]*?)<\/tbody>/i);
   if (!bodyM) return null;
-  const rows: ScreenerTable['rows'] = [];
-  for (const rm of bodyM[1].matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)) {
-    const cells2 = [...rm[1].matchAll(cellRe)].map((c) => ({ attrs: c[1], content: c[2] }));
-    if (!cells2.length) continue;
-    const label = deEnt(cells2[0].content.replace(/<[^>]+>/g, '')).replace(/\+$/, '').replace(/\s+/g, ' ').trim();
+  const rows: ScreenerRow[] = [];
+  const seen = new Set<string>();
+  for (const rm of bodyM[1].matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)) {
+    const cells = tableCells(rm[1]);
+    if (!cells.length) continue;
+    const label = labelFromCell(cells[0].content);
     if (!label) continue;
+    const key = normRatioKey(label);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
     const values: (number | null)[] = [];
-    for (let i = 1; i < cells2.length; i += 1) values.push(scrNum(cells2[i].content));
-    rows.push({ label, values });
+    for (let i = 1; i < cells.length; i += 1) values.push(scrNum(cells[i].content));
+    while (values.length < years.length) values.push(null);
+    if (values.length > years.length) values.length = years.length;
+    rows.push({ label, key, unit: unitFromLabel(label), values });
   }
   return { years, rows };
 }
 
-function parseScreenerStrip(html: string): ScreenerView['snapshot'] {
-  const out: ScreenerView['snapshot'] = {
+function parseScreenerStrip(html: string): ScreenerSnapshot {
+  const out: ScreenerSnapshot = {
     price: null, marketCap: null, pe: null, pb: null, bookValue: null,
     dividendYield: null, roce: null, roe: null, faceValue: null, high: null, low: null,
   };
@@ -541,25 +611,27 @@ function parseScreenerStrip(html: string): ScreenerView['snapshot'] {
   for (const li of seg.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/g)) {
     const block = li[1];
     const nameM = block.match(/<span class="name">([\s\S]*?)<\/span>/);
-    const valueM = block.match(/<span class="nowrap value">([\s\S]*)$/);
     if (!nameM) continue;
     const nameTxt = deEnt(nameM[1]).replace(/\s+/g, ' ').trim();
-    const valueBlock = valueM ? valueM[1] : block;
-    const nums = [...valueBlock.matchAll(/<span class="number">([^<]*)<\/span>/g)].map((m) => Number(m[1].replace(/[,\s]/g, '')));
+    const nums = [...block.matchAll(/<span class="number">([^<]*)<\/span>/g)]
+      .map((m) => Number(String(m[1]).replace(/[,\s]/g, '')))
+      .filter((n) => Number.isFinite(n));
     const key = nameTxt.toLowerCase();
     const nn = (i: number) => (nums.length > i ? nums[i] : null);
     if (key.includes('market cap')) out.marketCap = nn(0);
     else if (key.includes('current price')) out.price = nn(0);
-    else if (key.includes('high / low')) { out.high = nn(0); out.low = nn(1); }
-    else if (key.includes('stock p/e') || key.startsWith('p/e')) out.pe = nn(0);
+    else if (key.includes('high / low') || key.includes('high/low')) {
+      out.high = nn(0);
+      out.low = nn(1);
+    } else if (key.includes('stock p/e') || key === 'p/e') out.pe = nn(0);
     else if (key.includes('stock p/b') || key.includes('p/b')) out.pb = nn(0);
     else if (key.includes('book value')) out.bookValue = nn(0);
     else if (key.includes('dividend yield')) out.dividendYield = nn(0);
-    else if (key.trim().toLowerCase() === 'roce') out.roce = nn(0);
-    else if (key.trim().toLowerCase() === 'roe') out.roe = nn(0);
+    else if (key.trim() === 'roce') out.roce = nn(0);
+    else if (key.trim() === 'roe') out.roe = nn(0);
     else if (key.includes('face value')) out.faceValue = nn(0);
   }
-  if (out.pe == null && out.bookValue != null && out.bookValue > 0 && out.price != null && out.price > 0) {
+  if (out.pb == null && out.bookValue != null && out.bookValue > 0 && out.price != null && out.price > 0) {
     out.pb = Math.round((out.price / out.bookValue) * 100) / 100;
   }
   return out;
@@ -571,12 +643,12 @@ function parseRanges(html: string): ScreenerRange[] {
     const b = m[1];
     const th = b.match(/<th[^>]*>([\s\S]*?)<\/th>/);
     const label = th ? deEnt(th[1].replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim() : '';
-    if (!label || label.toLowerCase().startsWith('compounded')) continue; // sales/profit CAGR handled elsewhere
+    if (!label || label.toLowerCase().startsWith('compounded')) continue;
+    if (label.toLowerCase().includes('price cagr')) continue;
     const val = (key: string): number | null => {
       const rm = b.match(new RegExp(`<td>\\s*${key}\\s*</td>\\s*<td[^>]*>([\\s\\S]*?)<\\/td>`));
       return rm ? scrNum(rm[1]) : null;
     };
-    if (label.toLowerCase().includes('price cagr')) continue;
     out.push({
       label,
       y10: val('10 Years:'),
@@ -588,128 +660,220 @@ function parseRanges(html: string): ScreenerRange[] {
   return out;
 }
 
-function rigFromTable(t: ScreenerTable | null): Map<string, (number | null)[]> {
-  const map = new Map<string, (number | null)[]>();
+function rigFromTable(t: ScreenerTable | null): Map<string, ScreenerRow> {
+  const map = new Map<string, ScreenerRow>();
   if (!t) return map;
-  for (const r of t.rows) map.set(r.label.toLowerCase().replace(/\+$/, '').trim(), r.values);
+  for (const r of t.rows) map.set(r.key, r);
   return map;
 }
 
-function deriveScreener(view: (ScreenerTable | null)[]): ScreenerDerived | null {
-  const [pl, bs, ratios] = view;
+const SALES_KEYS = ['sales', 'revenue', 'net sales', 'interest earned'];
+const OP_KEYS = ['operating profit'];
+const OPM_KEYS = ['opm'];
+const NP_KEYS = ['net profit'];
+const NPM_KEYS = ['npm'];
+const EPS_KEYS = ['eps'];
+const EQ_KEYS = ['equity capital'];
+const RES_KEYS = ['reserves'];
+const BOR_KEYS = ['borrowings', 'total debt'];
+const NW_KEYS = ['net worth'];
+const TA_KEYS = ['total assets'];
+const CA_KEYS = ['current assets'];
+const CL_KEYS = ['current liabilities'];
+const INT_KEYS = ['interest'];
+const ROE_KEYS = ['roe'];
+const ROCE_KEYS = ['roce'];
+const ROA_KEYS = ['roa'];
+const DE_KEYS = ['debt to equity'];
+const CR_KEYS = ['current ratio'];
+const QR_KEYS = ['quick ratio'];
+const IC_KEYS = ['interest coverage'];
+const DD_KEYS = ['debtor days'];
+const ID_KEYS = ['inventory days'];
+const WC_KEYS = ['working capital days'];
+
+function atRow(map: Map<string, ScreenerRow>, aliases: string[], i: number): number | null {
+  for (const a of aliases) {
+    const row = map.get(normRatioKey(a));
+    if (!row) continue;
+    if (i >= 0 && i < row.values.length && row.values[i] != null) return row.values[i];
+  }
+  return null;
+}
+
+function latestRow(map: Map<string, ScreenerRow>, aliases: string[], preferIdx?: number): number | null {
+  if (preferIdx != null && preferIdx >= 0) {
+    const v = atRow(map, aliases, preferIdx);
+    if (v != null) return v;
+  }
+  for (const a of aliases) {
+    const row = map.get(normRatioKey(a));
+    if (!row) continue;
+    for (let i = row.values.length - 1; i >= 0; i -= 1) if (row.values[i] != null) return row.values[i];
+  }
+  return null;
+}
+
+function lastPopulatedIndex(years: string[], maps: Map<string, ScreenerRow>[]): number {
+  const n = years.length;
+  if (!n) return -1;
+  const fiscal = years
+    .map((y, i) => ({ y, i }))
+    .filter(({ y }) => /^\d{4}-\d{2}-\d{2}$/.test(y));
+  const order = fiscal.length ? fiscal : years.map((y, i) => ({ y, i }));
+  for (let k = order.length - 1; k >= 0; k -= 1) {
+    const i = order[k].i;
+    const has = maps.some((m) => {
+      for (const r of m.values()) if (r.values[i] != null) return true;
+      return false;
+    });
+    if (has) return i;
+  }
+  return order[order.length - 1]?.i ?? n - 1;
+}
+
+function deriveScreener(
+  pl: ScreenerTable | null,
+  bs: ScreenerTable | null,
+  ratios: ScreenerTable | null,
+  strip: ScreenerSnapshot,
+): ScreenerDerived | null {
   const plMap = rigFromTable(pl);
   const bsMap = rigFromTable(bs);
   const rtMap = rigFromTable(ratios);
-  const years = pl?.years ?? bs?.years ?? [];
-  const fiscal = years.filter((y) => /^\d{4}-\d{2}-\d{2}$/.test(y));
+  const years = pl?.years ?? bs?.years ?? ratios?.years ?? [];
   const n = years.length;
   if (!n) return null;
 
-  const at = (map: Map<string, (number | null)[]>, key: string, i: number): number | null => {
-    const v = map.get(key);
-    return v && i < v.length ? v[i] : null;
-  };
-  const atc = (map: Map<string, (number | null)[]>, needle: string, i: number): number | null => {
-    for (const [k, v] of map) if (k.includes(needle) && i < v.length) return v[i];
-    return null;
-  };
-
   const byYear: ScreenerYearMetrics[] = [];
   for (let i = 0; i < n; i += 1) {
-    const sales = atc(plMap, 'sales', i);
-    const opProfit = atc(plMap, 'operating profit', i);
-    const opmRow = atc(plMap, 'opm %', i);
-    const netProfit = atc(plMap, 'net profit', i);
-    const npmRow = atc(plMap, 'npm %', i);
-    const eps = atc(plMap, 'eps in rs', i);
-    const eqCap = atc(bsMap, 'equity capital', i);
-    const reserves = atc(bsMap, 'reserves', i);
-    const borrowings = atc(bsMap, 'borrowings', i);
-    const totalAssets = atc(bsMap, 'total assets', i);
-    const netWorth = eqCap != null && reserves != null ? eqCap + reserves : (atc(bsMap, 'net worth', i) ?? null);
-    const totalDebt = borrowings ?? atc(bsMap, 'total debt', i) ?? null;
-    const roe = netProfit != null && netWorth != null && netWorth !== 0 ? (netProfit / netWorth) * 100 : null;
+    const sales = atRow(plMap, SALES_KEYS, i);
+    const opProfit = atRow(plMap, OP_KEYS, i);
+    const opmRow = atRow(plMap, OPM_KEYS, i);
+    const netProfit = atRow(plMap, NP_KEYS, i);
+    const npmRow = atRow(plMap, NPM_KEYS, i);
+    const eps = atRow(plMap, EPS_KEYS, i);
+    const eqCap = atRow(bsMap, EQ_KEYS, i);
+    const reserves = atRow(bsMap, RES_KEYS, i);
+    const borrowings = atRow(bsMap, BOR_KEYS, i);
+    const totalAssets = atRow(bsMap, TA_KEYS, i);
+    const netWorth =
+      eqCap != null && reserves != null ? eqCap + reserves : atRow(bsMap, NW_KEYS, i);
+    const totalDebt = borrowings;
+    const tableRoe = atRow(rtMap, ROE_KEYS, i);
+    const tableRoce = atRow(rtMap, ROCE_KEYS, i);
+    const tableRoa = atRow(rtMap, ROA_KEYS, i);
+    const roe =
+      tableRoe ??
+      (netProfit != null && netWorth != null && netWorth !== 0 ? (netProfit / netWorth) * 100 : null);
     const roce =
-      opProfit != null && netWorth != null && totalDebt != null && netWorth + totalDebt !== 0
+      tableRoce ??
+      (opProfit != null && netWorth != null && totalDebt != null && netWorth + totalDebt !== 0
         ? (opProfit / (netWorth + totalDebt)) * 100
-        : null;
-    const roa = netProfit != null && totalAssets != null && totalAssets !== 0 ? (netProfit / totalAssets) * 100 : null;
-    const netMargin = npmRow ?? (netProfit != null && sales != null && sales !== 0 ? (netProfit / sales) * 100 : null);
-    const operatingMargin = opmRow ?? (opProfit != null && sales != null && sales !== 0 ? (opProfit / sales) * 100 : null);
-    byYear.push({ year: years[i], sales, netProfit, netWorth, totalDebt, totalAssets, roe, roce, roa, netMargin, operatingMargin, eps });
+        : null);
+    const roa =
+      tableRoa ??
+      (netProfit != null && totalAssets != null && totalAssets !== 0 ? (netProfit / totalAssets) * 100 : null);
+    const netMargin =
+      npmRow ?? (netProfit != null && sales != null && sales !== 0 ? (netProfit / sales) * 100 : null);
+    const operatingMargin =
+      opmRow ?? (opProfit != null && sales != null && sales !== 0 ? (opProfit / sales) * 100 : null);
+    byYear.push({
+      year: years[i],
+      sales,
+      netProfit,
+      netWorth,
+      totalDebt,
+      totalAssets,
+      roe,
+      roce,
+      roa,
+      netMargin,
+      operatingMargin,
+      eps,
+    });
   }
 
-  const lastF = fiscal[fiscal.length - 1];
-  const prevF = fiscal[fiscal.length - 2];
-  const li = lastF != null ? years.indexOf(lastF) : n - 1;
-  const pi = prevF != null ? years.indexOf(prevF) : li - 1;
-  const l = byYear[li] ?? byYear[byYear.length - 1];
-  const p = pi >= 0 ? byYear[pi] : undefined;
+  const li = lastPopulatedIndex(years, [plMap, bsMap, rtMap]);
+  const l = li >= 0 ? byYear[li] : byYear[byYear.length - 1];
+  const prevFiscal = (() => {
+    if (li <= 0) return undefined;
+    const y = years[li];
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(y)) return byYear[li - 1];
+    const prevKey = `${Number(y.slice(0, 4)) - 1}${y.slice(4)}`;
+    const pi = years.indexOf(prevKey);
+    return pi >= 0 ? byYear[pi] : byYear[li - 1];
+  })();
   const g = (cur: number | null, prv: number | null): number | null =>
     cur != null && prv != null && prv !== 0 ? ((cur - prv) / Math.abs(prv)) * 100 : null;
 
-  const latest = (key: string): number | null => {
-    const v = rtMap.get(key);
-    if (v) {
-      for (let i = v.length - 1; i >= 0; i -= 1) if (v[i] != null) return v[i];
-    }
-    return null;
-  };
+  const rnd = (v: number | null, d = 1): number | null =>
+    v == null || !Number.isFinite(v) ? null : Math.round(v * 10 ** d) / 10 ** d;
 
-  const overdue = (key: string): number | null => {
-    const v = rtMap.get(key);
-    if (!v) return null;
-    const fi = fiscal.length ? years.indexOf(fiscal[fiscal.length - 1]) : v.length - 1;
-    return v[fi] ?? null;
-  };
+  const tableRoe = latestRow(rtMap, ROE_KEYS, li);
+  const tableRoce = latestRow(rtMap, ROCE_KEYS, li);
+  const tableRoa = latestRow(rtMap, ROA_KEYS, li);
+
+  const ca = atRow(bsMap, CA_KEYS, li);
+  const cl = atRow(bsMap, CL_KEYS, li);
+  const op = atRow(plMap, OP_KEYS, li);
+  const intr = atRow(plMap, INT_KEYS, li);
 
   return {
-    latestYear: lastF ?? years[li],
-    roe: l?.roe ?? overdue('roe %'),
-    roce: l?.roce ?? overdue('roce %'),
-    roa: l?.roa ?? overdue('roa %'),
-    netMargin: l?.netMargin ?? null,
-    operatingMargin: l?.operatingMargin ?? null,
-    revenueGrowth: g(l?.sales ?? null, p?.sales ?? null),
-    earningsGrowth: g(l?.netProfit ?? null, p?.netProfit ?? null),
-    debtToEquity: (() => {
-      const d = latest('debt to equity');
-      if (d != null) return d;
-      const de = l?.netWorth != null && l?.netWorth !== 0 && l?.totalDebt != null ? l.totalDebt / l.netWorth : null;
-      return de != null ? de : null;
-    })(),
-    currentRatio: (() => {
-      const crRow = latest('current ratio');
-      if (crRow != null) return crRow;
-      const ca = atc(bsMap, 'current assets', li);
-      const cl = atc(bsMap, 'current liabilities', li);
-      return ca != null && cl != null && cl !== 0 ? ca / cl : null;
-    })(),
-    interestCoverage: (() => {
-      const ic = latest('interest coverage');
-      if (ic != null) return ic;
-      const op = at(plMap, 'operating profit', li);
-      const intr = at(plMap, 'interest', li);
-      return op != null && intr != null && intr !== 0 ? op / intr : null;
-    })(),
-    eps: at(plMap, 'eps in rs', li) ?? null,
+    latestYear: l?.year ?? years[li] ?? null,
+    // Prefer Screener's published ratio / top-strip (TTM) over a reconstructed formula.
+    roe: rnd(tableRoe ?? strip.roe ?? l?.roe ?? null),
+    roce: rnd(tableRoce ?? strip.roce ?? l?.roce ?? null),
+    roa: rnd(tableRoa ?? l?.roa ?? null),
+    netMargin: rnd(l?.netMargin ?? null),
+    operatingMargin: rnd(l?.operatingMargin ?? null),
+    revenueGrowth: rnd(g(l?.sales ?? null, prevFiscal?.sales ?? null)),
+    earningsGrowth: rnd(g(l?.netProfit ?? null, prevFiscal?.netProfit ?? null)),
+    debtToEquity: rnd(
+      latestRow(rtMap, DE_KEYS, li) ??
+        (l?.netWorth != null && l.netWorth !== 0 && l.totalDebt != null ? l.totalDebt / l.netWorth : null),
+      2,
+    ),
+    currentRatio: rnd(
+      latestRow(rtMap, CR_KEYS, li) ?? (ca != null && cl != null && cl !== 0 ? ca / cl : null),
+      2,
+    ),
+    quickRatio: rnd(latestRow(rtMap, QR_KEYS, li), 2),
+    interestCoverage: rnd(
+      latestRow(rtMap, IC_KEYS, li) ?? (op != null && intr != null && intr !== 0 ? op / intr : null),
+      2,
+    ),
+    eps: rnd(atRow(plMap, EPS_KEYS, li), 2),
     sales: l?.sales ?? null,
     netProfit: l?.netProfit ?? null,
     netWorth: l?.netWorth ?? null,
     totalDebt: l?.totalDebt ?? null,
+    debtorDays: rnd(latestRow(rtMap, DD_KEYS, li), 0),
+    inventoryDays: rnd(latestRow(rtMap, ID_KEYS, li), 0),
+    workingCapitalDays: rnd(latestRow(rtMap, WC_KEYS, li), 0),
     byYear,
   };
 }
 
-function parseScreenerView(html: string, kind: ConsolidationView): ScreenerView | null {
-  const strip = parseScreenerStrip(html);
+export function classifyScreenerPage(html: string): ConsolidationView | null {
+  if (/data-consolidated="true"/.test(html) || /Consolidated Figures/i.test(html)) return 'consolidated';
+  if (/data-consolidated="false"/.test(html) || /Standalone Figures/i.test(html)) return 'standalone';
+  return null;
+}
+
+export function parseScreenerViewFromHtml(html: string, kind: ConsolidationView): ScreenerView {
+  const snapshot = parseScreenerStrip(html);
   const ratios = parseScreenerTable(html, 'ratios');
   const pl = parseScreenerTable(html, 'profit-loss');
   const bs = parseScreenerTable(html, 'balance-sheet');
+  const cf = parseScreenerTable(html, 'cash-flow');
   const ranges = parseRanges(html);
-  const derived = deriveScreener([pl, bs, ratios]);
-  const view: ScreenerView = { kind, exists: true, snapshot: strip, pl, bs, ratios, ranges, derived };
-  return view;
+  const derived = deriveScreener(pl, bs, ratios, snapshot);
+  return { kind, exists: true, snapshot, pl, bs, cf, ratios, ranges, derived };
+}
+
+function parseScreenerView(html: string, kind: ConsolidationView): ScreenerView {
+  return parseScreenerViewFromHtml(html, kind);
 }
 
 async function screenerViewFetch(url: string): Promise<string | null> {
@@ -725,51 +889,82 @@ async function screenerViewFetch(url: string): Promise<string | null> {
   }
 }
 
-/** Full Screener fundamentals for a symbol — consolidated + standalone views. */
+export function sectorKindOf(sector: string | null, industry: string | null): SectorKind {
+  const s = `${sector ?? ''} ${industry ?? ''}`.toLowerCase();
+  if (/\binsurance\b/.test(s)) return 'insurance';
+  if (/\bbank\b/.test(s)) return 'bank';
+  if (/\bnbfc\b/.test(s) || /housing finance/.test(s) || /non.?banking/.test(s)) return 'nbfc';
+  if (/real estate|realty|construction|developer/.test(s)) return 'realty';
+  return 'generic';
+}
+
+function bankFromScreenerRows(view: ScreenerView | undefined): ScreenerBankRatios | null {
+  if (!view?.ratios) return null;
+  const map = rigFromTable(view.ratios);
+  const pick = (keys: string[]) => latestRow(map, keys);
+  const grossNpa = pick(['gross npa', 'gross npa percent']);
+  const netNpa = pick(['net npa', 'net npa percent']);
+  if (grossNpa == null && netNpa == null) return null;
+  return {
+    grossNpa,
+    netNpa,
+    roa: pick(['roa']),
+    npm: pick(['npm']),
+    source: 'screener',
+  };
+}
+
+/** Full Screener fundamentals — consolidated (`/consolidated/`) + standalone (bare `/company/SYM/`). */
 export async function fetchScreenerFundamentals(symbol: string): Promise<ScreenerFundamentals | null> {
   const page = `https://www.screener.in/company/${encodeURIComponent(symbol)}/`;
-  const [consH, stdH] = await Promise.all([
+  const [consH, bareH] = await Promise.all([
     screenerViewFetch(`${page}consolidated/`),
-    screenerViewFetch(`${page}standalone/`),
+    screenerViewFetch(page),
   ]);
-  const consolidated = consH ? parseScreenerView(consH, 'consolidated') : null;
-  const standalone = stdH ? parseScreenerView(stdH, 'standalone') : null;
-  if (!consolidated && !standalone) return null;
 
-  const src = consH ?? stdH ?? '';
+  const views: Partial<Record<ConsolidationView, ScreenerView>> = {};
+  const ingest = (html: string | null, hint: ConsolidationView) => {
+    if (!html) return;
+    const kind = classifyScreenerPage(html) ?? hint;
+    if (views[kind]) return;
+    views[kind] = parseScreenerView(html, kind);
+  };
+  ingest(consH, 'consolidated');
+  ingest(bareH, 'standalone');
+  if (!views.consolidated && !views.standalone) return null;
+
+  const src = (views.consolidated ? consH : bareH) ?? consH ?? bareH ?? '';
   const sector = src.match(/title="Sector">([^<]+)<\/a>/)?.[1]?.trim() ?? null;
   const industry = src.match(/title="Industry">([^<]+)<\/a>/)?.[1]?.trim() ?? null;
   const broad =
     src.match(/title="Broad Sector">([^<]+)<\/a>/)?.[1]?.trim() ??
     src.match(/title="Broad Industry">([^<]+)<\/a>/)?.[1]?.trim() ??
     null;
-  const brand = src.match(/<span class="min-width-0 overflow-wrap-anywhere">([\s\S]*?)<\/span>/)?.[1]?.replace(/<[^>]+>/g, '').trim() ?? null;
-  const name = brand ?? null;
-  const defaultView: ConsolidationView = consolidated ? 'consolidated' : 'standalone';
+  const brand =
+    src.match(/<span class="min-width-0 overflow-wrap-anywhere">([\s\S]*?)<\/span>/)?.[1]?.replace(/<[^>]+>/g, '').trim() ??
+    null;
+  const defaultView: ConsolidationView = views.consolidated ? 'consolidated' : 'standalone';
+  const kind = sectorKindOf([broad, sector, industry].filter(Boolean).join(' '), null);
 
   return {
     symbol,
-    name,
+    name: brand ?? null,
     broadSector: broad,
     sector,
     industry,
+    sectorKind: kind,
     defaultView,
-    views: {
-      ...(consolidated ? { consolidated } : {}),
-      ...(standalone ? { standalone } : {}),
-    },
-    bank: null,
+    views,
+    bank: kind === 'bank' || kind === 'nbfc' ? bankFromScreenerRows(views[defaultView]) : null,
   };
 }
-
-// ---- Bank / NBFC NPA from Finology (public), Screener gates it behind premium --
 
 const FINOLOGY_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
 
 function isBankingSector(sector: string | null, industry: string | null): boolean {
-  const s = `${sector ?? ''} ${industry ?? ''}`.toLowerCase();
-  return s.includes('bank') || s.includes('nbfc') || s.includes('housing finance') || s.includes('financial services');
+  const k = sectorKindOf(sector, industry);
+  return k === 'bank' || k === 'nbfc';
 }
 
 /** Pull quarterly Gross NPA / Net NPA / ROA / NPM for a bank from Finology. */
@@ -797,12 +992,15 @@ export async function fetchFinologyBankRatios(symbol: string): Promise<ScreenerB
       let value: number | null = null;
       for (let i = cells.length - 1; i >= 0; i -= 1) {
         const v = scrNum(cells[i]);
-        if (v != null) { value = v; break; }
+        if (v != null) {
+          value = v;
+          break;
+        }
       }
-      if (label === 'gross npa %') out.grossNpa = value;
-      else if (label === 'net npa %') out.netNpa = value;
-      else if (label === 'return on assets %') out.roa = value;
-      else if (label === 'npm %') out.npm = value;
+      if (label === 'gross npa %' || label === 'gross npa') out.grossNpa = value;
+      else if (label === 'net npa %' || label === 'net npa') out.netNpa = value;
+      else if (label === 'return on assets %' || label === 'roa %') out.roa = value;
+      else if (label === 'npm %' || label === 'npm') out.npm = value;
     }
     return out.grossNpa == null && out.netNpa == null ? null : out;
   } catch {
@@ -813,13 +1011,14 @@ export async function fetchFinologyBankRatios(symbol: string): Promise<ScreenerB
 /** Best-effort full fundamentals (Screener ratios + Finology bank NPA). */
 export async function fetchRealFundamentals(symbol: string): Promise<ScreenerFundamentals | null> {
   const sf = await fetchScreenerFundamentals(symbol);
-  if (sf && isBankingSector(sf.sector, sf.industry)) {
-    sf.bank = await fetchFinologyBankRatios(symbol);
+  if (sf && (sf.sectorKind === 'bank' || sf.sectorKind === 'nbfc')) {
+    const fin = await fetchFinologyBankRatios(symbol);
+    if (fin) sf.bank = fin;
   }
   return sf;
 }
 
-/** Fill legacy Metrics with authoritative Screener-derived values (in place). */
+/** Fill legacy Metrics with Screener values. Top-strip (current TTM) wins over reconstructed annuals. */
 export function applyScreener(m: Metrics, sf: ScreenerFundamentals | null): void {
   if (!sf) return;
   const v = sf.views[sf.defaultView];
@@ -830,7 +1029,7 @@ export function applyScreener(m: Metrics, sf: ScreenerFundamentals | null): void
   if (sf.broadSector) m.sector = sf.broadSector;
   if (sf.sector) m.industry = sf.industry ?? sf.sector;
   if (m.price == null || m.price <= 0) m.price = s.price ?? m.price;
-  if (s.marketCap != null) m.marketCap = s.marketCap;
+  if ((m.marketCap == null || m.marketCap <= 0) && s.marketCap != null) m.marketCap = s.marketCap * 1e7;
   if (s.pe != null) m.pe = s.pe;
   if (s.pb != null) m.pb = s.pb;
   if (s.bookValue != null) m.bookValue = s.bookValue;
@@ -843,8 +1042,8 @@ export function applyScreener(m: Metrics, sf: ScreenerFundamentals | null): void
   if (s.high != null) m.fiftyTwoWeekHigh = s.high;
   if (s.low != null) m.fiftyTwoWeekLow = s.low;
   if (d) {
-    if (d.roe != null) m.roe = d.roe;
-    if (d.roce != null) m.roce = d.roce;
+    if (m.roe == null && d.roe != null) m.roe = d.roe;
+    if (m.roce == null && d.roce != null) m.roce = d.roce;
     if (d.roa != null) m.roa = d.roa;
     if (d.netMargin != null) m.netMargin = d.netMargin;
     if (d.operatingMargin != null) m.operatingMargin = d.operatingMargin;
@@ -852,6 +1051,7 @@ export function applyScreener(m: Metrics, sf: ScreenerFundamentals | null): void
     if (d.earningsGrowth != null) m.earningsGrowth = d.earningsGrowth;
     if (d.debtToEquity != null) m.debtToEquity = d.debtToEquity;
     if (d.currentRatio != null) m.currentRatio = d.currentRatio;
+    if (d.quickRatio != null) m.quickRatio = d.quickRatio;
     if (d.eps != null) m.eps = d.eps;
     m.growth = d.earningsGrowth ?? m.growth ?? d.revenueGrowth;
   }

@@ -17,3 +17,4 @@ keyring/
 *.p12
 
 .vercel
+tmp/

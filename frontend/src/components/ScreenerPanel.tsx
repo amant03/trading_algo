@@ -1,14 +1,24 @@
 import { useState } from 'react';
-import type { ConsolidationView, ScreenerFundamentals, ScreenerYearMetrics } from '../types';
+import type { ConsolidationView, RatioUnit, ScreenerFundamentals, ScreenerRow, ScreenerYearMetrics } from '../types';
 
 interface Props {
   symbol: string;
   financials: ScreenerFundamentals | null;
 }
 
-const cr2 = (v: number | null): string => (v == null || !Number.isFinite(v) ? '—' : Number.isFinite(v) ? v.toFixed(2) : String(v));
-const cr1 = (v: number | null): string => (v == null || !Number.isFinite(v) ? '—' : v.toFixed(1));
-const pct = (v: number | null): string => `${cr2(v)}%`;
+const cr2 = (v: number | null | undefined): string => (v == null || !Number.isFinite(v) ? '—' : v.toFixed(2));
+const cr1 = (v: number | null | undefined): string => (v == null || !Number.isFinite(v) ? '—' : v.toFixed(1));
+const cr0 = (v: number | null | undefined): string => (v == null || !Number.isFinite(v) ? '—' : String(Math.round(v)));
+
+function fmtUnit(v: number | null | undefined, unit: RatioUnit | 'pct' | 'x' | 'days' | 'cr'): string {
+  if (v == null || !Number.isFinite(v)) return '—';
+  if (unit === 'pct') return `${cr1(v)}%`;
+  if (unit === 'days') return `${cr0(v)} d`;
+  if (unit === 'x') return cr2(v);
+  if (unit === 'cr') return compactCr(v);
+  if (unit === 'rs') return cr2(v);
+  return cr2(v);
+}
 
 /** Indian-style compact: 16676 Cr stays as-is; 116973 Cr -> 1.17L Cr. */
 function compactCr(value: number | null): string {
@@ -18,32 +28,47 @@ function compactCr(value: number | null): string {
   return `${value.toLocaleString('en-IN')} Cr`;
 }
 
-const KPI: { key: string; label: string }[] = [
-  { key: 'marketCap', label: 'Market Cap' },
-  { key: 'price', label: 'Current Price' },
-  { key: 'high', label: '52-wk High' },
-  { key: 'low', label: '52-wk Low' },
+const KPI: { key: string; label: string; unit?: 'pct' | 'rs' | 'cr' }[] = [
+  { key: 'marketCap', label: 'Market Cap', unit: 'cr' },
+  { key: 'price', label: 'Current Price', unit: 'rs' },
+  { key: 'high', label: '52-wk High', unit: 'rs' },
+  { key: 'low', label: '52-wk Low', unit: 'rs' },
   { key: 'pe', label: 'Stock P/E' },
-  { key: 'bookValue', label: 'Book Value' },
-  { key: 'dividendYield', label: 'Div Yield' },
-  { key: 'roce', label: 'ROCE' },
-  { key: 'roe', label: 'ROE' },
-  { key: 'faceValue', label: 'Face Value' },
+  { key: 'bookValue', label: 'Book Value', unit: 'rs' },
+  { key: 'dividendYield', label: 'Div Yield', unit: 'pct' },
+  { key: 'roce', label: 'ROCE', unit: 'pct' },
+  { key: 'roe', label: 'ROE', unit: 'pct' },
+  { key: 'faceValue', label: 'Face Value', unit: 'rs' },
 ];
 
 const MATRIX: { key: Exclude<keyof ScreenerYearMetrics, 'year'>; label: string; fmt: (v: number | null) => string }[] = [
   { key: 'sales', label: 'Sales', fmt: compactCr },
   { key: 'netProfit', label: 'Net Profit', fmt: compactCr },
-  { key: 'netMargin', label: 'Net Margin', fmt: pct },
-  { key: 'operatingMargin', label: 'Op Margin', fmt: pct },
+  { key: 'netMargin', label: 'Net Margin', fmt: (v) => fmtUnit(v, 'pct') },
+  { key: 'operatingMargin', label: 'Op Margin', fmt: (v) => fmtUnit(v, 'pct') },
   { key: 'eps', label: 'EPS', fmt: cr2 },
-  { key: 'roe', label: 'ROE', fmt: pct },
-  { key: 'roce', label: 'ROCE', fmt: pct },
-  { key: 'roa', label: 'ROA', fmt: pct },
+  { key: 'roe', label: 'ROE', fmt: (v) => fmtUnit(v, 'pct') },
+  { key: 'roce', label: 'ROCE', fmt: (v) => fmtUnit(v, 'pct') },
+  { key: 'roa', label: 'ROA', fmt: (v) => fmtUnit(v, 'pct') },
   { key: 'netWorth', label: 'Net Worth', fmt: compactCr },
   { key: 'totalDebt', label: 'Total Debt', fmt: compactCr },
   { key: 'totalAssets', label: 'Total Assets', fmt: compactCr },
 ];
+
+const BANK_KEYS = /npa|casa|credit|deposit|car |capital adequacy|provision|nim|yield on|cost of/;
+const REALTY_KEYS = /debtor|inventory|working capital|payable|conversion/;
+
+function sectorRows(kind: string | undefined, rows: ScreenerRow[]): ScreenerRow[] {
+  if (kind === 'bank' || kind === 'nbfc') {
+    const hit = rows.filter((r) => BANK_KEYS.test(r.label.toLowerCase()) || BANK_KEYS.test(r.key));
+    return hit.length ? hit : rows;
+  }
+  if (kind === 'realty') {
+    const hit = rows.filter((r) => REALTY_KEYS.test(r.label.toLowerCase()) || REALTY_KEYS.test(r.key));
+    return hit.length ? hit : rows;
+  }
+  return rows;
+}
 
 function Row({ label, right }: { label: string; right?: string }) {
   return (
@@ -55,7 +80,7 @@ function Row({ label, right }: { label: string; right?: string }) {
 }
 
 export default function ScreenerPanel({ symbol, financials }: Props) {
-  const [view, setView] = useState<ConsolidationView>('consolidated');
+  const [view, setView] = useState<ConsolidationView>(financials?.defaultView ?? 'consolidated');
   if (!financials) return null;
   const v = financials.views[view] ?? financials.views[financials.defaultView];
   if (!v) return null;
@@ -66,7 +91,8 @@ export default function ScreenerPanel({ symbol, financials }: Props) {
   const d = v.derived;
   const byYear = d?.byYear ?? [];
   const latestYear = d?.latestYear ?? null;
-  const extra = v.ratios?.rows ?? [];
+  const extra = sectorRows(financials.sectorKind, v.ratios?.rows ?? []);
+  const kind = financials.sectorKind ?? 'generic';
 
   const snapValues: Record<string, number | null> = {
     marketCap: s.marketCap,
@@ -86,11 +112,12 @@ export default function ScreenerPanel({ symbol, financials }: Props) {
       <div className="panel-title">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <h3>Screener fundamentals — {financials.name ?? symbol}</h3>
-          <div className="seg" role="tablist">
+          <div className="seg" role="tablist" aria-label="Consolidated or standalone">
             {hasBoth ? (
-              views.map((k) => (
+              (['consolidated', 'standalone'] as ConsolidationView[]).filter((k) => financials.views[k]).map((k) => (
                 <button
                   key={k}
+                  type="button"
                   className={k === view ? 'active' : ''}
                   onClick={() => setView(k)}
                 >
@@ -102,31 +129,32 @@ export default function ScreenerPanel({ symbol, financials }: Props) {
             )}
           </div>
         </div>
-        <span className="hint">Screener.in · {view}{hasBoth ? ' · default' : ''}</span>
+        <span className="hint">Screener.in · {view}{view === financials.defaultView ? ' · default' : ''}</span>
       </div>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '12px 0 4px' }}>
         {KPI.map((k) => {
           const raw = snapValues[k.key];
-          const val = k.key === 'dividendYield' ? (raw != null ? `${cr2(raw)}%` : null)
-            : k.key === 'roce' || k.key === 'roe' || k.key === 'pe' || k.key === 'price' || k.key === 'bookValue' || k.key === 'high' || k.key === 'low' ? cr2(raw)
-            : raw != null ? raw.toLocaleString('en-IN') : null;
+          const val = k.unit === 'pct' ? fmtUnit(raw, 'pct')
+            : k.unit === 'cr' ? (raw != null ? raw.toLocaleString('en-IN') + ' Cr' : '—')
+            : k.unit === 'rs' ? cr2(raw)
+            : cr2(raw);
           return (
             <span key={k.key} className="rel-chip" style={{ fontSize: 11 }}>
-              <span style={{ color: 'var(--muted)' }}>{k.label}</span> <b>{val ?? '—'}</b>
+              <span style={{ color: 'var(--muted)' }}>{k.label}</span> <b>{val}</b>
             </span>
           );
         })}
       </div>
 
-      {financials.bank && (
+      {(kind === 'bank' || kind === 'nbfc') && financials.bank && (
         <div className="card" style={{ marginTop: 8 }}>
           <div className="card-h" style={{ marginBottom: 6 }}>Bank credit quality</div>
           <div className="grid-d">
-            <div className="stat"><div className="k">Gross NPA</div><div className="v">{financials.bank.grossNpa != null ? `${cr2(financials.bank.grossNpa)}%` : '—'}</div></div>
-            <div className="stat"><div className="k">Net NPA</div><div className="v">{financials.bank.netNpa != null ? `${cr2(financials.bank.netNpa)}%` : '—'}</div></div>
-            <div className="stat"><div className="k">ROA</div><div className="v">{cr1(financials.bank.roa)}%</div></div>
-            <div className="stat"><div className="k">NPM</div><div className="v">{cr1(financials.bank.npm)}%</div></div>
+            <div className="stat"><div className="k">Gross NPA</div><div className="v">{fmtUnit(financials.bank.grossNpa, 'pct')}</div></div>
+            <div className="stat"><div className="k">Net NPA</div><div className="v">{fmtUnit(financials.bank.netNpa, 'pct')}</div></div>
+            <div className="stat"><div className="k">ROA</div><div className="v">{fmtUnit(financials.bank.roa, 'pct')}</div></div>
+            <div className="stat"><div className="k">NPM</div><div className="v">{fmtUnit(financials.bank.npm, 'pct')}</div></div>
           </div>
           <div className="hint" style={{ marginTop: 4 }}>NPA from the latest quarterly reporting · {financials.bank.source}</div>
         </div>
@@ -143,7 +171,7 @@ export default function ScreenerPanel({ symbol, financials }: Props) {
                 <tr>
                   <th className="s-rowhead">Metric</th>
                   {byYear.map((y, i) => (
-                    <th key={i} className={y.year === latestYear ? 's-cur' : ''}>{y.year}</th>
+                    <th key={i} className={y.year === latestYear ? 's-cur' : ''}>{y.year.slice(0, 4)}</th>
                   ))}
                 </tr>
               </thead>
@@ -164,9 +192,17 @@ export default function ScreenerPanel({ symbol, financials }: Props) {
 
       <div className="grid-2" style={{ marginTop: 12, gap: 18 }}>
         <div>
-          <div className="hint" style={{ marginBottom: 4 }}>Sector ratios — {financials.sector ?? view}</div>
+          <div className="hint" style={{ marginBottom: 4 }}>
+            {kind === 'bank' || kind === 'nbfc' ? 'Bank / NBFC ratios' : kind === 'realty' ? 'Realty cycle ratios' : `Sector ratios — ${financials.sector ?? view}`}
+          </div>
           {extra.length ? (
-            extra.map((r) => <Row key={r.label} label={r.label} right={r.values[r.values.length - 1] != null ? cr2(r.values[r.values.length - 1]) : '—'} />)
+            extra.map((r) => (
+              <Row
+                key={r.key}
+                label={r.label}
+                right={fmtUnit(r.values[r.values.length - 1], r.unit)}
+              />
+            ))
           ) : (
             <div className="muted" style={{ fontSize: 12 }}>No sector-specific ratio rows published for this company.</div>
           )}
@@ -174,17 +210,25 @@ export default function ScreenerPanel({ symbol, financials }: Props) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {d && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <Row label={`Revenue growth (FY ${latestYear ?? ''})`} right={pct(d.revenueGrowth)} />
-              <Row label={`Profit growth (FY ${latestYear ?? ''})`} right={pct(d.earningsGrowth)} />
+              <Row label={`Revenue growth (FY ${latestYear ?? ''})`} right={fmtUnit(d.revenueGrowth, 'pct')} />
+              <Row label={`Profit growth (FY ${latestYear ?? ''})`} right={fmtUnit(d.earningsGrowth, 'pct')} />
               <Row label="D/E" right={cr2(d.debtToEquity)} />
               <Row label="Current ratio" right={cr2(d.currentRatio)} />
+              {d.quickRatio != null && <Row label="Quick ratio" right={cr2(d.quickRatio)} />}
               <Row label="Interest coverage" right={cr2(d.interestCoverage)} />
+              {kind === 'realty' && (
+                <>
+                  <Row label="Debtor days" right={fmtUnit(d.debtorDays, 'days')} />
+                  <Row label="Inventory days" right={fmtUnit(d.inventoryDays, 'days')} />
+                  <Row label="Working capital days" right={fmtUnit(d.workingCapitalDays, 'days')} />
+                </>
+              )}
             </div>
           )}
           <div className="hint" style={{ fontSize: 11, lineHeight: 1.6 }}>
-            Ratios recomputed from Screener.in's reported P&amp;L, balance sheet &amp; ratios. Values marked “—” are not
+            Ratios from Screener.in's reported P&amp;L, balance sheet &amp; ratios. Values marked “—” are not
             published or not derivable for this company's sector.
-            <a href={`https://www.screener.in/company/${symbol}/`} target="_blank" rel="noopener noreferrer"> Open on Screener.in ↗</a>
+            <a href={`https://www.screener.in/company/${symbol}/${view === 'consolidated' ? 'consolidated/' : ''}`} target="_blank" rel="noopener noreferrer"> Open on Screener.in ↗</a>
           </div>
         </div>
       </div>

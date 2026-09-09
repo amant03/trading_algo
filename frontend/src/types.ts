@@ -298,6 +298,8 @@ export interface StockReports {
 // ---- Screener.in fundamentals (attached by the nightly batch + /api/funda) ----
 
 export type ConsolidationView = 'consolidated' | 'standalone';
+export type RatioUnit = 'pct' | 'days' | 'x' | 'cr' | 'rs' | 'number';
+export type SectorKind = 'bank' | 'nbfc' | 'insurance' | 'realty' | 'generic';
 
 export interface ScreenerRange {
   label: string;
@@ -307,9 +309,16 @@ export interface ScreenerRange {
   y1: number | null;
 }
 
+export interface ScreenerRow {
+  label: string;
+  key: string;
+  unit: RatioUnit;
+  values: (number | null)[];
+}
+
 export interface ScreenerTable {
   years: string[];
-  rows: { label: string; values: (number | null)[] }[];
+  rows: ScreenerRow[];
 }
 
 export interface ScreenerYearMetrics {
@@ -338,33 +347,40 @@ export interface ScreenerDerived {
   earningsGrowth: number | null;
   debtToEquity: number | null;
   currentRatio: number | null;
+  quickRatio: number | null;
   interestCoverage: number | null;
   eps: number | null;
   sales: number | null;
   netProfit: number | null;
   netWorth: number | null;
   totalDebt: number | null;
+  debtorDays: number | null;
+  inventoryDays: number | null;
+  workingCapitalDays: number | null;
   byYear: ScreenerYearMetrics[];
+}
+
+export interface ScreenerSnapshot {
+  price: number | null;
+  marketCap: number | null;
+  pe: number | null;
+  pb: number | null;
+  bookValue: number | null;
+  dividendYield: number | null;
+  roce: number | null;
+  roe: number | null;
+  faceValue: number | null;
+  high: number | null;
+  low: number | null;
 }
 
 export interface ScreenerView {
   kind: ConsolidationView;
   exists: boolean;
-  snapshot: {
-    price: number | null;
-    marketCap: number | null;
-    pe: number | null;
-    pb: number | null;
-    bookValue: number | null;
-    dividendYield: number | null;
-    roce: number | null;
-    roe: number | null;
-    faceValue: number | null;
-    high: number | null;
-    low: number | null;
-  };
+  snapshot: ScreenerSnapshot;
   pl: ScreenerTable | null;
   bs: ScreenerTable | null;
+  cf: ScreenerTable | null;
   ratios: ScreenerTable | null;
   ranges: ScreenerRange[];
   derived: ScreenerDerived | null;
@@ -384,6 +400,7 @@ export interface ScreenerFundamentals {
   broadSector: string | null;
   sector: string | null;
   industry: string | null;
+  sectorKind?: SectorKind;
   defaultView: ConsolidationView;
   views: Partial<Record<ConsolidationView, ScreenerView>>;
   bank: ScreenerBankRatios | null;

@@ -94,6 +94,20 @@ jobs:
         env:
           NEWS_MAX_SYMBOLS: '40'
 
+      - name: Pre-stage paper state (market hours)
+        if: env.MODE == 'news'
+        run: |
+          mkdir -p frontend/public/paper
+          curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/paper/state.json \
+            -o frontend/public/paper/state.json || echo "no paper state yet"
+
+      - name: Paper live-stop (market hours)
+        if: env.MODE == 'news'
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/paper.ts
+        env:
+          PAPER_LIVE_ONLY: '1'
+          LIVE_STOP_CHECK: '1'
+
       # ---- full pipeline (once a day + manual) ----------------------------
       - name: Apply database schema
         if: env.MODE == 'full'
@@ -183,6 +197,8 @@ jobs:
       - name: Paper trading (daily)
         if: env.MODE == 'full'
         run: node node_modules/tsx/dist/cli.mjs scripts/ci/paper.ts
+        env:
+          LIVE_STOP_CHECK: '1'
 
       - name: Job summary
         if: always()
