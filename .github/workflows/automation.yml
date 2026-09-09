@@ -213,6 +213,13 @@ jobs:
           retention-days: 30
           if-no-files-found: ignore
 
+      # Carry concurrent work (e.g. a user-triggered Import Symbol run that
+      # landed on automation-data after this run's pre-stage) into our output,
+      # so the force-push below never orphans it.
+      - name: Merge concurrent imports (artifacts union)
+        if: env.MODE == 'full'
+        run: node scripts/ci/persist-artifacts.mjs
+
       # Audit trail: commit the run's artifacts to `automation-data` (the
       # deployed UI reads the latest snapshot straight from there — no redeploy
       # needed). Market-hours runs only touch news.json; deep runs also bump
