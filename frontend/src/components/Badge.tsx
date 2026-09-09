@@ -21,6 +21,7 @@ export const SentimentBadge = ({ sentiment }: { sentiment: string }) =>
   sentiment.toUpperCase() === 'BULLISH' ? <Badge kind="buy">Positive</Badge> : sentiment.toUpperCase() === 'BEARISH' ? <Badge kind="sell">Negative</Badge> : <Badge kind="neutral">Neutral</Badge>;
 
 export const GradeBadge = ({ grade }: { grade: string }) => {
-  const kind = grade === 'A' || grade === 'A+' ? 'grade-a' : grade === 'B' || grade === 'B+' ? 'grade-b' : 'grade-c';
+  const g = grade.toUpperCase();
+  const kind = g.startsWith('A') ? 'grade-a' : g.startsWith('B') ? 'grade-b' : 'grade-c';
   return <span className={cls('badge neutral', kind)}>{grade}</span>;
 };

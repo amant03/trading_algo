@@ -1225,3 +1225,41 @@ a.news-headline:hover { color: var(--cyan); }
 .table .tr.head span:not(:first-child), .table .tr:not(.head) span:not(:first-child) { text-align: right; }
 .table .tr.head span:first-child, .table .tr:not(.head) span:first-child { text-align: left; }
 .table .empty { padding: 14px; }
+
+/* ---------- triple screener ---------- */
+.ts-panel .panel-title { align-items: flex-start; }
+.ts-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin: 4px 0 12px;
+}
+.ts-search, .ts-select {
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 7px 10px;
+  font-size: 12.5px;
+  outline: none;
+}
+.ts-search { min-width: 180px; flex: 1; }
+.ts-select { font-family: var(--font-mono); font-size: 11.5px; }
+.ts-wrap { max-height: 520px; overflow: auto; }
+.ts-mark { min-width: 92px; }
+.ts-mark-top { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-bottom: 4px; }
+.ts-mark-lab { font-size: 10px; color: var(--dim); letter-spacing: 0.06em; text-transform: uppercase; }
+.ts-mark-n { font-family: var(--font-mono); font-size: 12px; font-weight: 700; }
+.ts-bar {
+  height: 4px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 99px;
+  overflow: hidden;
+  margin-bottom: 3px;
+}
+.ts-bar > span { display: block; height: 100%; border-radius: 99px; }
+.ts-bar > span.up { background: var(--up); }
+.ts-bar > span.amber { background: var(--amber); }
+.ts-bar > span.down { background: var(--down); }
+.ts-mark-n.amber { color: var(--amber); }
