@@ -1172,3 +1172,26 @@ a.news-headline:hover { color: var(--cyan); }
 .ai-msg-bullets { margin: 6px 0 0; padding-left: 16px; font-size: 12px; color: var(--muted); }
 .ai-input-row { display: flex; gap: 8px; margin-top: 10px; }
 .ai-input-row .input { flex: 1; }
+
+/* ---------- paper lab ---------- */
+.stat-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim); margin-bottom: 8px; }
+.stat-value { font-size: 23px; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.stat-value .unit { font-size: 14px; color: var(--muted); font-weight: 600; }
+.stat-sub { font-size: 12px; margin-top: 5px; display: flex; align-items: center; gap: 6px; color: var(--dim); }
+
+.strat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 720px) { .strat-grid { grid-template-columns: 1fr; } }
+.strat-card { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 11px 12px; background: var(--bg2); }
+.strat-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+.strat-name { font-size: 12px; font-weight: 800; }
+.strat-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); padding: 2px 0; }
+.strat-row b { color: var(--text); font-family: var(--font-mono); font-size: 11.5px; }
+.strat-open { margin-top: 8px; font-size: 11px; font-family: var(--font-mono); color: var(--cyan); padding: 5px 7px; background: rgba(63,208,234,0.06); border: 1px dashed rgba(63,208,234,0.28); border-radius: 6px; }
+
+.table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table .tr { display: grid; grid-template-columns: repeat(7, minmax(0,1fr)); align-items: center; padding: 8px 10px; border-bottom: 1px solid rgba(26,36,51,0.6); gap: 8px; }
+.table .tr.head { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); border-bottom: 1px solid var(--line); }
+.table .tr:last-child { border-bottom: none; }
+.table .tr.head span:not(:first-child), .table .tr:not(.head) span:not(:first-child) { text-align: right; }
+.table .tr.head span:first-child, .table .tr:not(.head) span:first-child { text-align: left; }
+.table .empty { padding: 14px; }

@@ -8,6 +8,7 @@ import Stock from './pages/Stock';
 import Trading from './pages/Trading';
 import Algorithms from './pages/Algorithms';
 import Watchlist from './pages/Watchlist';
+import Paper from './pages/Paper';
 import { Toasts } from './components/Toasts';
 
 export default function App() {
@@ -26,6 +27,7 @@ export default function App() {
             <Route path="/trading" element={<Trading />} />
             <Route path="/algorithms" element={<Algorithms />} />
             <Route path="/watchlist" element={<Watchlist />} />
+            <Route path="/paper" element={<Paper />} />
           </Routes>
         </div>
       </div>

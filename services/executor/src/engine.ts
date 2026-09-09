@@ -52,7 +52,7 @@ export class PaperBroker {
   async init(): Promise<void> {
     await query(
       `INSERT INTO accounts (id, name, cash_balance, initial_capital, equity)
-       VALUES ($1, 'Paper Account', 1000000, 1000000, 1000000)
+       VALUES ($1, 'Paper Account', 100000, 100000, 100000)
        ON CONFLICT (id) DO NOTHING`,
       [ACCOUNT_ID],
     );
