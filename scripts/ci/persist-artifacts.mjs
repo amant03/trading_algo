@@ -19,7 +19,7 @@ const REPO = 'amant03/trading_algo';
 const BRANCH = 'automation-data';
 const PUBLIC = join(process.cwd(), 'frontend', 'public');
 
-function readJson(rel: string): unknown {
+function readJson(rel) {
   const p = join(PUBLIC, rel);
   if (!existsSync(p)) return null;
   try {
@@ -29,7 +29,7 @@ function readJson(rel: string): unknown {
   }
 }
 
-async function fetchRemote(rel: string): Promise<string | null> {
+async function fetchRemote(rel) {
   const url = `https://raw.githubusercontent.com/${REPO}/${BRANCH}/frontend/public/${rel}`;
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
@@ -41,12 +41,12 @@ async function fetchRemote(rel: string): Promise<string | null> {
   }
 }
 
-async function unionAnalysis(): Promise<void> {
-  const local = readJson('analysis.json') as any;
+async function unionAnalysis() {
+  const local = readJson('analysis.json');
   const remoteRaw = await fetchRemote('analysis.json');
   if (!local) return;
   if (!remoteRaw) return;
-  let remote: any;
+  let remote;
   try {
     remote = JSON.parse(remoteRaw);
   } catch {
@@ -69,12 +69,12 @@ async function unionAnalysis(): Promise<void> {
   console.log(`merge-artifacts: analysis union +${added} remote symbols -> ${count} total`);
 }
 
-async function unionNews(): Promise<void> {
-  const local = readJson('news.json') as any;
+async function unionNews() {
+  const local = readJson('news.json');
   const remoteRaw = await fetchRemote('news.json');
   if (!local) return;
   if (!remoteRaw) return;
-  let remote: any;
+  let remote;
   try {
     remote = JSON.parse(remoteRaw);
   } catch {
@@ -95,7 +95,7 @@ async function unionNews(): Promise<void> {
   console.log(`merge-artifacts: news union +${added} remote symbols -> ${local.symbols} total`);
 }
 
-async function main(): Promise<void> {
+async function main() {
   await unionAnalysis();
   await unionNews();
   // sanity: refresh any gating artifact that was only present upstream
