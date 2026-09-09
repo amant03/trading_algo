@@ -252,16 +252,9 @@ async function main(): Promise<void> {
   const startIdx = state.lastDate ? dates.indexOf(state.lastDate) + 1 : Math.max(0, dates.length - SEED_WINDOW_DAYS);
   const scope = dates.slice(state.lastDate ? startIdx : 0);
   const seed = !state.lastDate;
-  let dayPnlStart: number | null = null;
-
-  const closeAt = (bars: Bar[] | undefined, date: string): number | null => {
-    const bar = bars?.find((b) => b.date === date);
-    return bar ? bar.c : null;
-  };
 
   for (let i = 0; i < scope.length; i++) {
     const date = scope[i];
-    if (dayPnlStart == null) dayPnlStart = state.cash + positionsEquity(state, bySymbol, date);
 
     for (const strat of STRATEGIES) {
       const bucket = state.buckets[strat.id];
@@ -379,7 +372,10 @@ async function main(): Promise<void> {
 
   // ---- write dashboard view + state ---------------------------------------
   const equity = state.cash + positionsEquity(state, bySymbol, state.lastDate);
-  const dayPnl = dayPnlStart != null ? equity - dayPnlStart : 0;
+  // day P&L = move vs the previous processed day (works for both seed backfill
+  // and the daily one-day advance: the prior session's equity is history[-2]).
+  const prevEq = state.history[state.history.length - 2]?.equity;
+  const dayPnl = prevEq != null ? equity - prevEq : 0;
   const strategies = STRATEGIES.map((s) => {
     const b = state.buckets[s.id];
     const pos = state.positions[s.id];
