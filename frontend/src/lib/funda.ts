@@ -110,6 +110,7 @@ export interface AnalysisEntry {
   price: number;
   marketCap: number | null;
   metrics: Record<string, number | null>;
+  financials?: ScreenerFundamentals | null;
   screens: { buffett: Screen; lynch: Screen; graham: Screen };
   management: null;
   peers: EntryPeer[];
@@ -367,6 +368,491 @@ export async function screenerPeers(symbol: string): Promise<string[]> {
   return out;
 }
 
+// ---- Screener.in real ratio & financials engine ----------------------------
+//
+// Screener is the authoritative public source for Indian fundamentals. Its
+// company pages expose per-year P&L, Balance Sheet and ratio tables plus a top
+// ratio strip (Market Cap, P/E, Book Value, Dividend Yield, ROCE, ROE, ...).
+// Not every ratio has its own row for every company — Lodha shows only ROCE in
+// the ratios table — so the missing critical ratios (ROE, ROA, net margin,
+// growth, D/E, ...) are COMPUTED from the same Screener P&L / Balance Sheet,
+// guaranteeing they are present and correct even when Yahoo has no data.
+// Bank NPA is gated behind premium on Screener, so for banks/NBFCs we pull the
+// quarterly NPA block from Finology (ticker.finology.in), which is public.
+
+export type ConsolidationView = 'consolidated' | 'standalone';
+
+export interface ScreenerRange {
+  label: string;
+  y10: number | null;
+  y5: number | null;
+  y3: number | null;
+  y1: number | null;
+}
+
+export interface ScreenerTable {
+  years: string[];
+  rows: { label: string; values: (number | null)[] }[];
+}
+
+export interface ScreenerYearMetrics {
+  year: string;
+  sales: number | null;
+  netProfit: number | null;
+  netWorth: number | null;
+  totalDebt: number | null;
+  totalAssets: number | null;
+  roe: number | null;
+  roce: number | null;
+  roa: number | null;
+  netMargin: number | null;
+  operatingMargin: number | null;
+  eps: number | null;
+}
+
+export interface ScreenerDerived {
+  latestYear: string | null;
+  roe: number | null;
+  roce: number | null;
+  roa: number | null;
+  netMargin: number | null;
+  operatingMargin: number | null;
+  revenueGrowth: number | null;
+  earningsGrowth: number | null;
+  debtToEquity: number | null;
+  currentRatio: number | null;
+  interestCoverage: number | null;
+  eps: number | null;
+  sales: number | null;
+  netProfit: number | null;
+  netWorth: number | null;
+  totalDebt: number | null;
+  byYear: ScreenerYearMetrics[];
+}
+
+export interface ScreenerView {
+  kind: ConsolidationView;
+  exists: boolean;
+  snapshot: {
+    price: number | null;
+    marketCap: number | null;
+    pe: number | null;
+    pb: number | null;
+    bookValue: number | null;
+    dividendYield: number | null;
+    roce: number | null;
+    roe: number | null;
+    faceValue: number | null;
+    high: number | null;
+    low: number | null;
+  };
+  pl: ScreenerTable | null;
+  bs: ScreenerTable | null;
+  ratios: ScreenerTable | null;
+  ranges: ScreenerRange[];
+  derived: ScreenerDerived | null;
+}
+
+export interface ScreenerBankRatios {
+  grossNpa: number | null;
+  netNpa: number | null;
+  roa: number | null;
+  npm: number | null;
+  source: string;
+}
+
+export interface ScreenerFundamentals {
+  symbol: string;
+  name: string | null;
+  broadSector: string | null;
+  sector: string | null;
+  industry: string | null;
+  defaultView: ConsolidationView;
+  views: Partial<Record<ConsolidationView, ScreenerView>>;
+  bank: ScreenerBankRatios | null;
+}
+
+const deEnt = (s: string): string =>
+  s
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ');
+
+/** Pull the number out of a Screener cell (Indian comma grouping, % signs, rupee glyphs). */
+function scrNum(text: string): number | null {
+  const span = text.match(/<span class="number">([^<]*)<\/span>/);
+  const raw = deEnt(span ? span[1] : text.replace(/<[^>]+>/g, ''));
+  const m = raw.replace(/[,\s\u00a0]/g, '').match(/-?\d+(\.\d+)?/);
+  return m ? Number(m[0]) : null;
+}
+
+function parseScreenerTable(html: string, sectionId: string): ScreenerTable | null {
+  const start = html.indexOf(`id="${sectionId}"`);
+  if (start < 0) return null;
+  const tableStart = html.indexOf('<table', start);
+  if (tableStart < 0) return null;
+  const tableEnd = html.indexOf('</table>', tableStart);
+  if (tableEnd < 0) return null;
+  const seg = html.slice(tableStart, tableEnd);
+
+  // capture open-tag attrs (data-date-key) AND content
+  const cellRe = /<t[dh]((?:"[^"]*"|[^"'>])*)>([\s\S]*?)<\/t[dh]>/g;
+  const theadM = seg.match(/<thead>([\s\S]*?)<\/thead>/);
+  const headers = theadM ? [...theadM[1].matchAll(cellRe)].map((c) => ({ attrs: c[1], content: c[2] })) : [];
+  const years: string[] = [];
+  for (let i = 1; i < headers.length; i += 1) {
+    const dk = headers[i].attrs.match(/data-date-key="([^"]+)"/);
+    const txt = deEnt(headers[i].content.replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim();
+    years.push(dk ? dk[1] : txt);
+  }
+
+  const bodyM = seg.match(/<tbody>([\s\S]*?)<\/tbody>/);
+  if (!bodyM) return null;
+  const rows: ScreenerTable['rows'] = [];
+  for (const rm of bodyM[1].matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)) {
+    const cells2 = [...rm[1].matchAll(cellRe)].map((c) => ({ attrs: c[1], content: c[2] }));
+    if (!cells2.length) continue;
+    const label = deEnt(cells2[0].content.replace(/<[^>]+>/g, '')).replace(/\+$/, '').replace(/\s+/g, ' ').trim();
+    if (!label) continue;
+    const values: (number | null)[] = [];
+    for (let i = 1; i < cells2.length; i += 1) values.push(scrNum(cells2[i].content));
+    rows.push({ label, values });
+  }
+  return { years, rows };
+}
+
+function parseScreenerStrip(html: string): ScreenerView['snapshot'] {
+  const out: ScreenerView['snapshot'] = {
+    price: null, marketCap: null, pe: null, pb: null, bookValue: null,
+    dividendYield: null, roce: null, roe: null, faceValue: null, high: null, low: null,
+  };
+  const start = html.indexOf('<ul id="top-ratios">');
+  if (start < 0) return out;
+  const end = html.indexOf('</ul>', start);
+  if (end < 0) return out;
+  const seg = html.slice(start, end);
+  for (const li of seg.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/g)) {
+    const block = li[1];
+    const nameM = block.match(/<span class="name">([\s\S]*?)<\/span>/);
+    const valueM = block.match(/<span class="nowrap value">([\s\S]*)$/);
+    if (!nameM) continue;
+    const nameTxt = deEnt(nameM[1]).replace(/\s+/g, ' ').trim();
+    const valueBlock = valueM ? valueM[1] : block;
+    const nums = [...valueBlock.matchAll(/<span class="number">([^<]*)<\/span>/g)].map((m) => Number(m[1].replace(/[,\s]/g, '')));
+    const key = nameTxt.toLowerCase();
+    const nn = (i: number) => (nums.length > i ? nums[i] : null);
+    if (key.includes('market cap')) out.marketCap = nn(0);
+    else if (key.includes('current price')) out.price = nn(0);
+    else if (key.includes('high / low')) { out.high = nn(0); out.low = nn(1); }
+    else if (key.includes('stock p/e') || key.startsWith('p/e')) out.pe = nn(0);
+    else if (key.includes('stock p/b') || key.includes('p/b')) out.pb = nn(0);
+    else if (key.includes('book value')) out.bookValue = nn(0);
+    else if (key.includes('dividend yield')) out.dividendYield = nn(0);
+    else if (key.trim().toLowerCase() === 'roce') out.roce = nn(0);
+    else if (key.trim().toLowerCase() === 'roe') out.roe = nn(0);
+    else if (key.includes('face value')) out.faceValue = nn(0);
+  }
+  if (out.pe == null && out.bookValue != null && out.bookValue > 0 && out.price != null && out.price > 0) {
+    out.pb = Math.round((out.price / out.bookValue) * 100) / 100;
+  }
+  return out;
+}
+
+function parseRanges(html: string): ScreenerRange[] {
+  const out: ScreenerRange[] = [];
+  for (const m of html.matchAll(/<table class="ranges-table">([\s\S]*?)<\/table>/g)) {
+    const b = m[1];
+    const th = b.match(/<th[^>]*>([\s\S]*?)<\/th>/);
+    const label = th ? deEnt(th[1].replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim() : '';
+    if (!label || label.toLowerCase().startsWith('compounded')) continue; // sales/profit CAGR handled elsewhere
+    const val = (key: string): number | null => {
+      const rm = b.match(new RegExp(`<td>\\s*${key}\\s*</td>\\s*<td[^>]*>([\\s\\S]*?)<\\/td>`));
+      return rm ? scrNum(rm[1]) : null;
+    };
+    if (label.toLowerCase().includes('price cagr')) continue;
+    out.push({
+      label,
+      y10: val('10 Years:'),
+      y5: val('5 Years:'),
+      y3: val('3 Years:'),
+      y1: val('Last Year:') ?? val('1 Year:'),
+    });
+  }
+  return out;
+}
+
+function rigFromTable(t: ScreenerTable | null): Map<string, (number | null)[]> {
+  const map = new Map<string, (number | null)[]>();
+  if (!t) return map;
+  for (const r of t.rows) map.set(r.label.toLowerCase().replace(/\+$/, '').trim(), r.values);
+  return map;
+}
+
+function deriveScreener(view: (ScreenerTable | null)[]): ScreenerDerived | null {
+  const [pl, bs, ratios] = view;
+  const plMap = rigFromTable(pl);
+  const bsMap = rigFromTable(bs);
+  const rtMap = rigFromTable(ratios);
+  const years = pl?.years ?? bs?.years ?? [];
+  const fiscal = years.filter((y) => /^\d{4}-\d{2}-\d{2}$/.test(y));
+  const n = years.length;
+  if (!n) return null;
+
+  const at = (map: Map<string, (number | null)[]>, key: string, i: number): number | null => {
+    const v = map.get(key);
+    return v && i < v.length ? v[i] : null;
+  };
+  const atc = (map: Map<string, (number | null)[]>, needle: string, i: number): number | null => {
+    for (const [k, v] of map) if (k.includes(needle) && i < v.length) return v[i];
+    return null;
+  };
+
+  const byYear: ScreenerYearMetrics[] = [];
+  for (let i = 0; i < n; i += 1) {
+    const sales = atc(plMap, 'sales', i);
+    const opProfit = atc(plMap, 'operating profit', i);
+    const opmRow = atc(plMap, 'opm %', i);
+    const netProfit = atc(plMap, 'net profit', i);
+    const npmRow = atc(plMap, 'npm %', i);
+    const eps = atc(plMap, 'eps in rs', i);
+    const eqCap = atc(bsMap, 'equity capital', i);
+    const reserves = atc(bsMap, 'reserves', i);
+    const borrowings = atc(bsMap, 'borrowings', i);
+    const totalAssets = atc(bsMap, 'total assets', i);
+    const netWorth = eqCap != null && reserves != null ? eqCap + reserves : (atc(bsMap, 'net worth', i) ?? null);
+    const totalDebt = borrowings ?? atc(bsMap, 'total debt', i) ?? null;
+    const roe = netProfit != null && netWorth != null && netWorth !== 0 ? (netProfit / netWorth) * 100 : null;
+    const roce =
+      opProfit != null && netWorth != null && totalDebt != null && netWorth + totalDebt !== 0
+        ? (opProfit / (netWorth + totalDebt)) * 100
+        : null;
+    const roa = netProfit != null && totalAssets != null && totalAssets !== 0 ? (netProfit / totalAssets) * 100 : null;
+    const netMargin = npmRow ?? (netProfit != null && sales != null && sales !== 0 ? (netProfit / sales) * 100 : null);
+    const operatingMargin = opmRow ?? (opProfit != null && sales != null && sales !== 0 ? (opProfit / sales) * 100 : null);
+    byYear.push({ year: years[i], sales, netProfit, netWorth, totalDebt, totalAssets, roe, roce, roa, netMargin, operatingMargin, eps });
+  }
+
+  const lastF = fiscal[fiscal.length - 1];
+  const prevF = fiscal[fiscal.length - 2];
+  const li = lastF != null ? years.indexOf(lastF) : n - 1;
+  const pi = prevF != null ? years.indexOf(prevF) : li - 1;
+  const l = byYear[li] ?? byYear[byYear.length - 1];
+  const p = pi >= 0 ? byYear[pi] : undefined;
+  const g = (cur: number | null, prv: number | null): number | null =>
+    cur != null && prv != null && prv !== 0 ? ((cur - prv) / Math.abs(prv)) * 100 : null;
+
+  const latest = (key: string): number | null => {
+    const v = rtMap.get(key);
+    if (v) {
+      for (let i = v.length - 1; i >= 0; i -= 1) if (v[i] != null) return v[i];
+    }
+    return null;
+  };
+
+  const overdue = (key: string): number | null => {
+    const v = rtMap.get(key);
+    if (!v) return null;
+    const fi = fiscal.length ? years.indexOf(fiscal[fiscal.length - 1]) : v.length - 1;
+    return v[fi] ?? null;
+  };
+
+  return {
+    latestYear: lastF ?? years[li],
+    roe: l?.roe ?? overdue('roe %'),
+    roce: l?.roce ?? overdue('roce %'),
+    roa: l?.roa ?? overdue('roa %'),
+    netMargin: l?.netMargin ?? null,
+    operatingMargin: l?.operatingMargin ?? null,
+    revenueGrowth: g(l?.sales ?? null, p?.sales ?? null),
+    earningsGrowth: g(l?.netProfit ?? null, p?.netProfit ?? null),
+    debtToEquity: (() => {
+      const d = latest('debt to equity');
+      if (d != null) return d;
+      const de = l?.netWorth != null && l?.netWorth !== 0 && l?.totalDebt != null ? l.totalDebt / l.netWorth : null;
+      return de != null ? de : null;
+    })(),
+    currentRatio: (() => {
+      const crRow = latest('current ratio');
+      if (crRow != null) return crRow;
+      const ca = atc(bsMap, 'current assets', li);
+      const cl = atc(bsMap, 'current liabilities', li);
+      return ca != null && cl != null && cl !== 0 ? ca / cl : null;
+    })(),
+    interestCoverage: (() => {
+      const ic = latest('interest coverage');
+      if (ic != null) return ic;
+      const op = at(plMap, 'operating profit', li);
+      const intr = at(plMap, 'interest', li);
+      return op != null && intr != null && intr !== 0 ? op / intr : null;
+    })(),
+    eps: at(plMap, 'eps in rs', li) ?? null,
+    sales: l?.sales ?? null,
+    netProfit: l?.netProfit ?? null,
+    netWorth: l?.netWorth ?? null,
+    totalDebt: l?.totalDebt ?? null,
+    byYear,
+  };
+}
+
+function parseScreenerView(html: string, kind: ConsolidationView): ScreenerView | null {
+  const strip = parseScreenerStrip(html);
+  const ratios = parseScreenerTable(html, 'ratios');
+  const pl = parseScreenerTable(html, 'profit-loss');
+  const bs = parseScreenerTable(html, 'balance-sheet');
+  const ranges = parseRanges(html);
+  const derived = deriveScreener([pl, bs, ratios]);
+  const view: ScreenerView = { kind, exists: true, snapshot: strip, pl, bs, ratios, ranges, derived };
+  return view;
+}
+
+async function screenerViewFetch(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': SCREENER_UA, Accept: 'text/html,application/xhtml+xml' },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return null;
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
+/** Full Screener fundamentals for a symbol — consolidated + standalone views. */
+export async function fetchScreenerFundamentals(symbol: string): Promise<ScreenerFundamentals | null> {
+  const page = `https://www.screener.in/company/${encodeURIComponent(symbol)}/`;
+  const [consH, stdH] = await Promise.all([
+    screenerViewFetch(`${page}consolidated/`),
+    screenerViewFetch(`${page}standalone/`),
+  ]);
+  const consolidated = consH ? parseScreenerView(consH, 'consolidated') : null;
+  const standalone = stdH ? parseScreenerView(stdH, 'standalone') : null;
+  if (!consolidated && !standalone) return null;
+
+  const src = consH ?? stdH ?? '';
+  const sector = src.match(/title="Sector">([^<]+)<\/a>/)?.[1]?.trim() ?? null;
+  const industry = src.match(/title="Industry">([^<]+)<\/a>/)?.[1]?.trim() ?? null;
+  const broad =
+    src.match(/title="Broad Sector">([^<]+)<\/a>/)?.[1]?.trim() ??
+    src.match(/title="Broad Industry">([^<]+)<\/a>/)?.[1]?.trim() ??
+    null;
+  const brand = src.match(/<span class="min-width-0 overflow-wrap-anywhere">([\s\S]*?)<\/span>/)?.[1]?.replace(/<[^>]+>/g, '').trim() ?? null;
+  const name = brand ?? null;
+  const defaultView: ConsolidationView = consolidated ? 'consolidated' : 'standalone';
+
+  return {
+    symbol,
+    name,
+    broadSector: broad,
+    sector,
+    industry,
+    defaultView,
+    views: {
+      ...(consolidated ? { consolidated } : {}),
+      ...(standalone ? { standalone } : {}),
+    },
+    bank: null,
+  };
+}
+
+// ---- Bank / NBFC NPA from Finology (public), Screener gates it behind premium --
+
+const FINOLOGY_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
+
+function isBankingSector(sector: string | null, industry: string | null): boolean {
+  const s = `${sector ?? ''} ${industry ?? ''}`.toLowerCase();
+  return s.includes('bank') || s.includes('nbfc') || s.includes('housing finance') || s.includes('financial services');
+}
+
+/** Pull quarterly Gross NPA / Net NPA / ROA / NPM for a bank from Finology. */
+export async function fetchFinologyBankRatios(symbol: string): Promise<ScreenerBankRatios | null> {
+  try {
+    const res = await fetch(`https://ticker.finology.in/company/${encodeURIComponent(symbol)}`, {
+      headers: { 'User-Agent': FINOLOGY_UA, Accept: 'text/html,application/xhtml+xml' },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+    const anchor = html.indexOf('Gross NPA');
+    if (anchor < 0) return null;
+    const tableStart = html.lastIndexOf('<table', anchor);
+    const tableEnd = html.indexOf('</table>', anchor);
+    if (tableStart < 0 || tableEnd < 0) return null;
+    const seg = html.slice(tableStart, tableEnd);
+    const out: ScreenerBankRatios = { grossNpa: null, netNpa: null, roa: null, npm: null, source: 'finology' };
+    for (const rm of seg.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)) {
+      const row = rm[1];
+      const th = row.match(/<th scope="row">([\s\S]*?)<\/th>/);
+      if (!th) continue;
+      const label = deEnt(th[1].replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim().toLowerCase();
+      const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((c) => c[1]);
+      let value: number | null = null;
+      for (let i = cells.length - 1; i >= 0; i -= 1) {
+        const v = scrNum(cells[i]);
+        if (v != null) { value = v; break; }
+      }
+      if (label === 'gross npa %') out.grossNpa = value;
+      else if (label === 'net npa %') out.netNpa = value;
+      else if (label === 'return on assets %') out.roa = value;
+      else if (label === 'npm %') out.npm = value;
+    }
+    return out.grossNpa == null && out.netNpa == null ? null : out;
+  } catch {
+    return null;
+  }
+}
+
+/** Best-effort full fundamentals (Screener ratios + Finology bank NPA). */
+export async function fetchRealFundamentals(symbol: string): Promise<ScreenerFundamentals | null> {
+  const sf = await fetchScreenerFundamentals(symbol);
+  if (sf && isBankingSector(sf.sector, sf.industry)) {
+    sf.bank = await fetchFinologyBankRatios(symbol);
+  }
+  return sf;
+}
+
+/** Fill legacy Metrics with authoritative Screener-derived values (in place). */
+export function applyScreener(m: Metrics, sf: ScreenerFundamentals | null): void {
+  if (!sf) return;
+  const v = sf.views[sf.defaultView];
+  if (!v) return;
+  const s = v.snapshot;
+  const d = v.derived;
+  if (sf.name && (!m.name || m.name === m.symbol)) m.name = sf.name;
+  if (sf.broadSector) m.sector = sf.broadSector;
+  if (sf.sector) m.industry = sf.industry ?? sf.sector;
+  if (m.price == null || m.price <= 0) m.price = s.price ?? m.price;
+  if (s.marketCap != null) m.marketCap = s.marketCap;
+  if (s.pe != null) m.pe = s.pe;
+  if (s.pb != null) m.pb = s.pb;
+  if (s.bookValue != null) m.bookValue = s.bookValue;
+  if (m.pb == null && s.bookValue != null && s.bookValue > 0 && (m.price ?? 0) > 0) {
+    m.pb = Math.round((m.price / s.bookValue) * 100) / 100;
+  }
+  if (s.dividendYield != null) m.dividendYield = s.dividendYield;
+  if (s.roce != null) m.roce = s.roce;
+  if (s.roe != null) m.roe = s.roe;
+  if (s.high != null) m.fiftyTwoWeekHigh = s.high;
+  if (s.low != null) m.fiftyTwoWeekLow = s.low;
+  if (d) {
+    if (d.roe != null) m.roe = d.roe;
+    if (d.roce != null) m.roce = d.roce;
+    if (d.roa != null) m.roa = d.roa;
+    if (d.netMargin != null) m.netMargin = d.netMargin;
+    if (d.operatingMargin != null) m.operatingMargin = d.operatingMargin;
+    if (d.revenueGrowth != null) m.revenueGrowth = d.revenueGrowth;
+    if (d.earningsGrowth != null) m.earningsGrowth = d.earningsGrowth;
+    if (d.debtToEquity != null) m.debtToEquity = d.debtToEquity;
+    if (d.currentRatio != null) m.currentRatio = d.currentRatio;
+    if (d.eps != null) m.eps = d.eps;
+    m.growth = d.earningsGrowth ?? m.growth ?? d.revenueGrowth;
+  }
+}
+
 // ---- Screens -------------------------------------------------------------
 
 export function buffettScreen(m: Metrics): Screen {
@@ -622,6 +1108,7 @@ export function buildEntry(opts: {
   peers?: EntryPeer[];
   reports?: EntryReports | null;
   quarterEnd?: string | null;
+  financials?: ScreenerFundamentals | null;
 }): AnalysisEntry {
   const { symbol, name, m, price } = opts;
   m.growth = m.earningsGrowth ?? m.revenueGrowth;
@@ -667,6 +1154,7 @@ export function buildEntry(opts: {
       fiiHolding: m.fiiHolding == null ? null : Math.round(m.fiiHolding),
     },
     screens,
+    financials: opts.financials ?? null,
     management: null,
     peers: opts.peers ?? [],
     reports: opts.reports ?? (opts.quarterEnd == null ? null : reportLinks(symbol, name ?? symbol, opts.quarterEnd)),

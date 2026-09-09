@@ -565,9 +565,11 @@ async function loadAnalysis(): Promise<boolean> {
 const fundaFetching = new Set<string>();
 
 export async function ensureFundamentals(symbols: string[]): Promise<void> {
-  const missing = [...new Set(symbols.map((s) => s.trim().toUpperCase()).filter(Boolean))].filter(
-    (s) => !useLive.getState().fundamentals[s] && !fundaFetching.has(s),
-  );
+  const missing = [...new Set(symbols.map((s) => s.trim().toUpperCase()).filter(Boolean))].filter((s) => {
+    if (fundaFetching.has(s)) return false;
+    const existing = useLive.getState().fundamentals[s];
+    return !existing || !existing.financials;
+  });
   if (!missing.length) return;
   for (const s of missing) fundaFetching.add(s);
   try {

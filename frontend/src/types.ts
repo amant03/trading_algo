@@ -295,6 +295,100 @@ export interface StockReports {
   annual: ReportGroup;
 }
 
+// ---- Screener.in fundamentals (attached by the nightly batch + /api/funda) ----
+
+export type ConsolidationView = 'consolidated' | 'standalone';
+
+export interface ScreenerRange {
+  label: string;
+  y10: number | null;
+  y5: number | null;
+  y3: number | null;
+  y1: number | null;
+}
+
+export interface ScreenerTable {
+  years: string[];
+  rows: { label: string; values: (number | null)[] }[];
+}
+
+export interface ScreenerYearMetrics {
+  year: string;
+  sales: number | null;
+  netProfit: number | null;
+  netWorth: number | null;
+  totalDebt: number | null;
+  totalAssets: number | null;
+  roe: number | null;
+  roce: number | null;
+  roa: number | null;
+  netMargin: number | null;
+  operatingMargin: number | null;
+  eps: number | null;
+}
+
+export interface ScreenerDerived {
+  latestYear: string | null;
+  roe: number | null;
+  roce: number | null;
+  roa: number | null;
+  netMargin: number | null;
+  operatingMargin: number | null;
+  revenueGrowth: number | null;
+  earningsGrowth: number | null;
+  debtToEquity: number | null;
+  currentRatio: number | null;
+  interestCoverage: number | null;
+  eps: number | null;
+  sales: number | null;
+  netProfit: number | null;
+  netWorth: number | null;
+  totalDebt: number | null;
+  byYear: ScreenerYearMetrics[];
+}
+
+export interface ScreenerView {
+  kind: ConsolidationView;
+  exists: boolean;
+  snapshot: {
+    price: number | null;
+    marketCap: number | null;
+    pe: number | null;
+    pb: number | null;
+    bookValue: number | null;
+    dividendYield: number | null;
+    roce: number | null;
+    roe: number | null;
+    faceValue: number | null;
+    high: number | null;
+    low: number | null;
+  };
+  pl: ScreenerTable | null;
+  bs: ScreenerTable | null;
+  ratios: ScreenerTable | null;
+  ranges: ScreenerRange[];
+  derived: ScreenerDerived | null;
+}
+
+export interface ScreenerBankRatios {
+  grossNpa: number | null;
+  netNpa: number | null;
+  roa: number | null;
+  npm: number | null;
+  source: string;
+}
+
+export interface ScreenerFundamentals {
+  symbol: string;
+  name: string | null;
+  broadSector: string | null;
+  sector: string | null;
+  industry: string | null;
+  defaultView: ConsolidationView;
+  views: Partial<Record<ConsolidationView, ScreenerView>>;
+  bank: ScreenerBankRatios | null;
+}
+
 export interface StockAnalysis {
   symbol: string;
   name: string | null;
@@ -304,6 +398,7 @@ export interface StockAnalysis {
   price: number;
   marketCap: number | null;
   metrics: StockAnalysisMetrics;
+  financials: ScreenerFundamentals | null;
   screens: { buffett: ScreenResult; lynch: ScreenResult; graham: ScreenResult };
   management: MgmtAnalysis | null;
   peers: PeerInfo[];

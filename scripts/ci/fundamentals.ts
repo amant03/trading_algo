@@ -33,11 +33,15 @@ import { INSTRUMENTS as SEED } from '../../services/shared/src/instruments-data.
 import {
   emptyMetrics,
   applyYahoo,
+  applyScreener,
+  fetchRealFundamentals,
   extractCompanion,
   screenerPeers,
   makeYahoo,
   buildEntry,
   reportLinks,
+  type Metrics,
+  type ScreenerFundamentals,
 } from '../../frontend/src/lib/funda.js';
 
 interface Row {
@@ -108,8 +112,38 @@ function metricsFromRow(r: Row, price: number) {
 }
 
 const BATCH = Number(process.env.COVERAGE_BATCH ?? '40');
+const REFRESH_BATCH = Number(process.env.REFRESH_BATCH ?? '40');
 const ANALYSIS_FILE = join(process.cwd(), 'frontend', 'public', 'analysis.json');
 const UNIVERSE_FILE = join(process.cwd(), 'frontend', 'public', 'universe.json');
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Rebuild a Metrics object from an existing analysis entry (for carry-refresh). */
+function metricsFromEntry(e: any): Metrics | null {
+  if (!e?.symbol) return null;
+  const m = emptyMetrics(e.symbol, { name: e.name ?? e.symbol, sector: e.sector ?? null, industry: e.industry ?? null });
+  m.price = Number(e.price ?? 0);
+  const met = e.metrics ?? {};
+  const copy = (k: keyof Metrics, v: unknown) => {
+    if (v != null && v !== '' && isFinite(Number(v))) (m as unknown as Record<string, unknown>)[k] = Number(v);
+  };
+  (Object.keys(met) as (keyof Metrics)[]).forEach((k) => copy(k, met[k]));
+  copy('description', e.description);
+  copy('targetLow', e.verdict?.targetLow);
+  copy('targetMean', e.verdict?.targetMean);
+  copy('targetHigh', e.verdict?.targetHigh);
+  copy('analysts', e.verdict?.analysts);
+  m.growth = m.earningsGrowth ?? m.revenueGrowth;
+  return m;
+}
+
+/** Paced Screener.finology fetch + merge; returns the fresh fundamentals. */
+async function screenerFor(symbol: string, m: Metrics): Promise<ScreenerFundamentals | null> {
+  const sf = await fetchRealFundamentals(symbol);
+  if (sf) applyScreener(m, sf);
+  await sleep(140);
+  return sf;
+}
 
 async function main(): Promise<void> {
   const rowsRes = await pool.query<Row>(
@@ -193,6 +227,7 @@ async function main(): Promise<void> {
         yahooData = null;
       }
     }
+    const sf = await screenerFor(r.symbol, m);
     const companion = extractCompanion(yahooData);
     yahooPeersPer[r.symbol] = companion.peers;
     quarterEndPer[r.symbol] = companion.quarterEnd;
@@ -202,6 +237,7 @@ async function main(): Promise<void> {
       name: seedName.get(r.symbol) ?? r.symbol,
       m,
       price,
+      financials: sf,
       quarterEnd: companion.quarterEnd,
     });
     stocks[r.symbol] = entry;
@@ -240,6 +276,7 @@ async function main(): Promise<void> {
       }
     }
     if (!(m.price > 0)) continue; // stale/no listing — skip until next nightly
+    const sf = await screenerFor(u.symbol, m);
     const companion = extractCompanion(yahooData);
     yahooPeersPer[u.symbol] = companion.peers;
     quarterEndPer[u.symbol] = companion.quarterEnd;
@@ -248,12 +285,45 @@ async function main(): Promise<void> {
       name: u.name,
       m,
       price: m.price,
+      financials: sf,
       quarterEnd: companion.quarterEnd,
     });
     stocks[u.symbol] = entry;
   }
 
-  // ---- 3. competition (peers) + disclosure reports -----------------------
+  // ---- 3. carry-refresh: heal old entries still missing Screener financials --
+  let refreshed = 0;
+  if (REFRESH_BATCH > 1) {
+    const needRefresh = Object.entries(stocks)
+      .filter(([, e]) => e && typeof e === 'object' && !(e as any).financials)
+      .map(([sym, e]) => ({ sym, e: e as any }))
+      .slice(0, REFRESH_BATCH);
+    for (const { sym, e } of needRefresh) {
+      try {
+        const m = metricsFromEntry(e);
+        if (!m || !(m.price > 0)) continue;
+        const sf = await screenerFor(sym, m);
+        const rebuilt = buildEntry({
+          symbol: sym,
+          name: e.name ?? sym,
+          m,
+          price: m.price,
+          financials: sf,
+          peers: e.peers ?? [],
+          reports: e.reports ?? null,
+          quarterEnd: null,
+        });
+        if (sf) {
+          stocks[sym] = { ...rebuilt, peers: e.peers ?? [], reports: e.reports ?? null };
+          refreshed += 1;
+        }
+      } catch {
+        // keep the carried entry as-is
+      }
+    }
+  }
+
+  // ---- 4. competition (peers) + disclosure reports -----------------------
   const allSyms = new Set(Object.keys(stocks));
   const byIndustry = new Map<string, string[]>();
   const bySector = new Map<string, string[]>();
@@ -344,6 +414,7 @@ async function main(): Promise<void> {
     seed: dbRows.size,
     batch: candidates.length,
     carried: prevUniverse,
+    refreshed,
     stocks,
     sparklines: spark,
   };
@@ -352,7 +423,7 @@ async function main(): Promise<void> {
   writeFileSync(ANALYSIS_FILE, JSON.stringify(out));
 
   console.log(
-    `fundamentals: ${dbRows.size} seed + ${candidates.length} batch + ${prevUniverse} carried = ${allSyms.size} stocks (source=${out.source}, yahooFields=${yahooTouched})`,
+    `fundamentals: ${dbRows.size} seed + ${candidates.length} batch + ${prevUniverse} carried (${refreshed} refreshed) = ${allSyms.size} stocks (source=${out.source}, yahooFields=${yahooTouched})`,
   );
   await pool.end();
 }

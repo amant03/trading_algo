@@ -9,6 +9,7 @@ import AdvChart, { type AdvRangeId } from '../components/charts/AdvChart';
 import NewsFeed from '../components/NewsFeed';
 import CompetitionPanel from '../components/CompetitionPanel';
 import ReportsPanel from '../components/ReportsPanel';
+import ScreenerPanel from '../components/ScreenerPanel';
 import AIAnalyst from '../components/AIAnalyst';
 import {
   sma,
@@ -768,6 +769,8 @@ export default function Stock() {
                   )}
                 </div>
               </div>
+
+              <ScreenerPanel symbol={upper} financials={analysis.financials ?? null} />
 
               <div className="panel">
                 <div className="panel-title">

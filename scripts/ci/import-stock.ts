@@ -19,6 +19,8 @@ import { join } from 'path';
 import {
   emptyMetrics,
   applyYahoo,
+  applyScreener,
+  fetchRealFundamentals,
   makeYahoo,
   buildEntry,
   screenerPeers,
@@ -119,6 +121,8 @@ async function main(): Promise<void> {
   const data = await yahoo.quoteSummary(`${symbol}.NS`);
   const m = emptyMetrics(symbol, { name: symbol });
   applyYahoo(m, data);
+  const sf = await fetchRealFundamentals(symbol);
+  applyScreener(m, sf);
 
   const peers = await screenerPeers(symbol);
   const entry = buildEntry({
@@ -126,6 +130,7 @@ async function main(): Promise<void> {
     name: m.name ?? symbol,
     m,
     price: m.price,
+    financials: sf,
     peers: peers.slice(0, 9).map((p) => ({ symbol: p, name: p, industry: null, sector: null })),
     quarterEnd: extractCompanion(data).quarterEnd,
   });
