@@ -11,13 +11,78 @@
 // GET /api/funda?symbols=RELIANCE,TCS   (comma list, max 8)
 
 import { makeYahoo, emptyMetrics, applyYahoo, extractCompanion, buildEntry, screenerPeers } from '../src/lib/funda';
-import { jsonHeaders, NSE_UNIVERSE } from './chart';
 
 interface UniverseRow {
   symbol: string;
   name: string;
   cap: string | null;
   mktCap: number | null;
+}
+
+// NOTE: kept self-contained (no `import ... from './chart'`) — Vercel builds
+// every api/*.ts as its own function, and cross-function imports break the
+// emitted lambdas at runtime (instant 500).
+const NSE_UNIVERSE: { symbol: string; name: string; sector: string }[] = [
+  { symbol: 'RELIANCE', name: 'Reliance Industries Ltd', sector: 'Energy' },
+  { symbol: 'TCS', name: 'Tata Consultancy Services Ltd', sector: 'IT' },
+  { symbol: 'HDFCBANK', name: 'HDFC Bank Ltd', sector: 'Banking' },
+  { symbol: 'ICICIBANK', name: 'ICICI Bank Ltd', sector: 'Banking' },
+  { symbol: 'INFY', name: 'Infosys Ltd', sector: 'IT' },
+  { symbol: 'ITC', name: 'ITC Ltd', sector: 'FMCG' },
+  { symbol: 'BHARTIARTL', name: 'Bharti Airtel Ltd', sector: 'Telecom' },
+  { symbol: 'SBIN', name: 'State Bank of India', sector: 'Banking' },
+  { symbol: 'KOTAKBANK', name: 'Kotak Mahindra Bank Ltd', sector: 'Banking' },
+  { symbol: 'AXISBANK', name: 'Axis Bank Ltd', sector: 'Banking' },
+  { symbol: 'LT', name: 'Larsen & Toubro Ltd', sector: 'Capital Goods' },
+  { symbol: 'HINDUNILVR', name: 'Hindustan Unilever Ltd', sector: 'FMCG' },
+  { symbol: 'SUNPHARMA', name: 'Sun Pharmaceutical Industries', sector: 'Pharma' },
+  { symbol: 'BAJFINANCE', name: 'Bajaj Finance Ltd', sector: 'Financials' },
+  { symbol: 'MARUTI', name: 'Maruti Suzuki India Ltd', sector: 'Auto' },
+  { symbol: 'TITAN', name: 'Titan Company Ltd', sector: 'Consumer' },
+  { symbol: 'ASIANPAINT', name: 'Asian Paints Ltd', sector: 'Consumer' },
+  { symbol: 'ULTRACEMCO', name: 'UltraTech Cement Ltd', sector: 'Cement' },
+  { symbol: 'NTPC', name: 'NTPC Ltd', sector: 'Power' },
+  { symbol: 'ADANIENT', name: 'Adani Enterprises Ltd', sector: 'Conglomerate' },
+  { symbol: 'ADANIPORTS', name: 'Adani Ports & SEZ Ltd', sector: 'Infrastructure' },
+  { symbol: 'POWERGRID', name: 'Power Grid Corp of India', sector: 'Power' },
+  { symbol: 'ONGC', name: 'Oil & Natural Gas Corp Ltd', sector: 'Energy' },
+  { symbol: 'TATAMOTORS', name: 'Tata Motors Ltd', sector: 'Auto' },
+  { symbol: 'TATASTEEL', name: 'Tata Steel Ltd', sector: 'Metals' },
+  { symbol: 'JSWSTEEL', name: 'JSW Steel Ltd', sector: 'Metals' },
+  { symbol: 'WIPRO', name: 'Wipro Ltd', sector: 'IT' },
+  { symbol: 'TECHM', name: 'Tech Mahindra Ltd', sector: 'IT' },
+  { symbol: 'HCLTECH', name: 'HCL Technologies Ltd', sector: 'IT' },
+  { symbol: 'NESTLEIND', name: 'Nestle India Ltd', sector: 'FMCG' },
+  { symbol: 'M&M', name: 'Mahindra & Mahindra Ltd', sector: 'Auto' },
+  { symbol: 'TATACONSUM', name: 'Tata Consumer Products Ltd', sector: 'FMCG' },
+  { symbol: 'BAJAJFINSV', name: 'Bajaj Finserv Ltd', sector: 'Financials' },
+  { symbol: 'HDFCLIFE', name: 'HDFC Life Insurance Co', sector: 'Insurance' },
+  { symbol: 'SBILIFE', name: 'SBI Life Insurance Co', sector: 'Insurance' },
+  { symbol: 'DRREDDY', name: "Dr. Reddy's Laboratories Ltd", sector: 'Pharma' },
+  { symbol: 'CIPLA', name: 'Cipla Ltd', sector: 'Pharma' },
+  { symbol: 'APOLLOHOSP', name: 'Apollo Hospitals Enterprise', sector: 'Healthcare' },
+  { symbol: 'GRASIM', name: 'Grasim Industries Ltd', sector: 'Cement' },
+  { symbol: 'HINDALCO', name: 'Hindalco Industries Ltd', sector: 'Metals' },
+  { symbol: 'BPCL', name: 'Bharat Petroleum Corp Ltd', sector: 'Energy' },
+  { symbol: 'COALINDIA', name: 'Coal India Ltd', sector: 'Energy' },
+  { symbol: 'EICHERMOT', name: 'Eicher Motors Ltd', sector: 'Auto' },
+  { symbol: 'HEROMOTOCO', name: 'Hero MotoCorp Ltd', sector: 'Auto' },
+  { symbol: 'INDUSINDBK', name: 'IndusInd Bank Ltd', sector: 'Banking' },
+  { symbol: 'BRITANNIA', name: 'Britannia Industries Ltd', sector: 'FMCG' },
+  { symbol: 'DIVISLAB', name: "Divi's Laboratories Ltd", sector: 'Pharma' },
+  { symbol: 'BAJAJ-AUTO', name: 'Bajaj Auto Ltd', sector: 'Auto' },
+  { symbol: 'TATAPOWER', name: 'Tata Power Co Ltd', sector: 'Power' },
+  { symbol: 'IRCTC', name: 'Indian Railway Catering & Tourism Corp', sector: 'Travel' },
+  { symbol: 'IDEA', name: 'Vodafone Idea Ltd', sector: 'Telecom' },
+  { symbol: 'HAL', name: 'Hindustan Aeronautics Ltd', sector: 'Defence' },
+];
+
+function jsonHeaders(): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-store, max-age=0',
+    'Access-Control-Allow-Origin': '*',
+  };
 }
 
 const TTL_MS = 6 * 3600 * 1000;

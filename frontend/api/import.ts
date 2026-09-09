@@ -10,9 +10,15 @@
 // Uses the REPO_PAT env var (classic PAT with `workflow` scope) that is set on
 // the Vercel production environment for this deployment.
 
-import { jsonHeaders } from './chart';
-
 const SYM_RE = /^[A-Z][A-Z0-9&-]{0,19}$/;
+
+function jsonHeaders(): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-store, max-age=0',
+    'Access-Control-Allow-Origin': '*',
+  };
+}
 
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url);
