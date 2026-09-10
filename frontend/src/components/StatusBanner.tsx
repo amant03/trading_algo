@@ -5,7 +5,7 @@ import { timeAgo } from '../format';
 export default function StatusBanner() {
   const mode = useLive((s) => s.mode);
   const overview = useLive((s) => s.overview);
-  if (mode === 'live') return null;
+  if (mode === 'live' || mode === 'relay') return null;
 
   const updated = overview?.updatedAt ?? null;
 
@@ -17,11 +17,6 @@ export default function StatusBanner() {
           Backend reachable over REST — polling every 4s. WebSocket stream unavailable
           (deployed frontends proxy REST only).
           {updated ? <em> Updated {timeAgo(updated)}</em> : null}
-        </span>
-      )}
-      {mode === 'relay' && (
-        <span>
-          {updated ? <em> Prices updated {timeAgo(updated)}</em> : null}
         </span>
       )}
       {mode === 'snapshot' && (
