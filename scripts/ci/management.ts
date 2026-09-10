@@ -6,6 +6,15 @@
 // appends a `management` block to each entry in `frontend/public/analysis.json`
 // (written by fundamentals.ts). Reruns idle-safe: if Yahoo or the news bank is
 // unreachable it leaves existing analysis untouched and exits clean.
+//
+// Symbol coverage follows the fundamentals coverage (SEED + every symbol
+// already in `analysis.json`), so the nightly analysis batch automatically
+// widens the management net too (a stock like DLF added via the coverage batch
+// used to stay empty because only SEED was scanned).
+//
+// Env knobs:
+//   MANAGEMENT_MAX  cap on how many symbols are scanned this run (defaults to
+//                   the whole covered set, up to 400)
 
 import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
@@ -14,6 +23,7 @@ import { INSTRUMENTS as SEED } from '../../services/shared/src/instruments-data.
 const ANALYSIS_FILE = join(process.cwd(), 'frontend', 'public', 'analysis.json');
 const KEEP_DAYS = 45;
 const PER_STOCK_CASES = 10;
+const POOL_SIZE = 6;
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36';
 
@@ -109,7 +119,7 @@ function significantTokens(name: string, symbol: string): string[] {
   return [...new Set(tokens)];
 }
 
-async function newsCases(symbol: string, name: string): Promise<LegalCase[]> {
+async function newsCases(symbol: string, name: string): Promise<{ ok: boolean; cases: LegalCase[] }> {
   const tokens = significantTokens(name, symbol);
   const queries = [
     `"${name}" (fraud OR scam OR criminal OR arrest OR FIR OR CBI OR ED OR PMLA OR money launder)`,
@@ -118,11 +128,13 @@ async function newsCases(symbol: string, name: string): Promise<LegalCase[]> {
   ];
   const map = new Map<string, LegalCase>();
   const relevance = /(fraud|scam|arrest|fir|cbi|ed raids|money launder|criminal|prosecut|chargesheet|convict|sebi|penalty|barred|ban on|adjudicat|show cause|restraint|lawsuit|\bcourt\b|nclt|petition|\bplea\b|civil suit|complaint|probe|investigation|raids)/i;
+  let ok = false;
   for (const q of queries) {
     const xml = await fetchText(
       'https://news.google.com/rss/search?q=' + encodeURIComponent(q) + '&hl=en-IN&gl=IN&ceid=IN:en',
     );
     if (!xml) continue;
+    ok = true;
     for (const it of xml.match(/<item>[\s\S]*?<\/item>/g) ?? []) {
       const titleM = it.match(/<title>([\s\S]*?)<\/title>/);
       const linkM = it.match(/<link>([\s\S]*?)<\/link>/);
@@ -150,7 +162,7 @@ async function newsCases(symbol: string, name: string): Promise<LegalCase[]> {
     }
     await new Promise((r) => setTimeout(r, 150));
   }
-  return [...map.values()].slice(0, PER_STOCK_CASES);
+  return { ok, cases: [...map.values()].slice(0, PER_STOCK_CASES) };
 }
 
 function gradeFor(score: number): string {
@@ -240,44 +252,75 @@ async function main(): Promise<void> {
     return;
   }
 
-  let done = 0;
-  for (const s of SEED) {
-    const sym = s.symbol;
+  // ---- symbol universe: SEED + every symbol the analyst model covers ------
+  // (matches news.ts) so coverage-batch additions — DLF, etc. — no longer stay
+  // empty just because they aren't in the hard-coded seed list.
+  const wanted = new Map<string, string>(); // symbol -> name
+  for (const s of SEED) wanted.set(s.symbol, s.name);
+  for (const [sym, e] of Object.entries(stocks)) {
+    if (!sym || wanted.has(sym)) continue;
+    wanted.set(sym, typeof e?.name === 'string' ? e.name : sym);
+  }
+  const max = Number(process.env.MANAGEMENT_MAX ?? (wanted.size > 400 ? 400 : wanted.size));
+
+  const tasks: { sym: string; entry: any }[] = [];
+  for (const sym of [...wanted.keys()].slice(0, max)) {
     const entry = stocks[sym];
-    if (entry === undefined) continue;
-    const symObject = `${sym}.NS`;
-    const name = entry.name ?? s.name;
-    // keep previous data on transient failures
-    const previous = entry.management as MgmtAnalysis | undefined;
-
-    let founders: MgmtAnalysis['founders'] = previous?.founders ?? [];
-    try {
-      const fresh = await quoteSummaryOfficers(symObject);
-      if (fresh.length) founders = fresh;
-    } catch {
-      // keep previous
-    }
-
-    let cases: LegalCase[] = previous?.cases ?? [];
-    try {
-      const fresh = await newsCases(sym, name);
-      if (fresh.length) cases = fresh;
-    } catch {
-      // keep previous
-    }
-
-    const ph = entry.metrics?.promoterHolding ?? null;
-    const mgmt =
-      previous && cases.length === 0 && founders.length === 0
-        ? previous
-        : analyze({ founders, cases, promoterHolding: ph });
-    entry.management = mgmt;
-    done += 1;
-    console.log(`management: ${sym} -> ${mgmt.grade} (${mgmt.score}/100, ${mgmt.cases.length} cases flagged)`);
+    if (entry !== undefined) tasks.push({ sym, entry });
   }
 
+  let cursor = 0;
+  let scored = 0;
+  const worker = async () => {
+    while (true) {
+      const idx = cursor;
+      cursor += 1;
+      if (idx >= tasks.length) return;
+      const { sym, entry } = tasks[idx];
+      const name = entry.name ?? sym;
+      // keep previous data on transient failures
+      const previous = entry.management as MgmtAnalysis | undefined;
+
+      let founders: MgmtAnalysis['founders'] = previous?.founders ?? [];
+      try {
+        const fresh = await quoteSummaryOfficers(`${sym}.NS`);
+        if (fresh.length) founders = fresh;
+      } catch {
+        // keep previous
+      }
+
+      let cases: LegalCase[] = previous?.cases ?? [];
+      let newsOk = false;
+      try {
+        const fresh = await newsCases(sym, name);
+        newsOk = fresh.ok;
+        if (fresh.cases.length) cases = fresh.cases;
+      } catch {
+        // keep previous
+      }
+
+      const ph = entry.metrics?.promoterHolding ?? null;
+      // If neither news nor officers could be reached AND there is nothing to
+      // carry forward, skip — don't fabricate a clean-sheet block that would
+      // look like a real "no litigation" verdict.
+      const noData = !newsOk && founders.length === 0 && cases.length === 0 && previous == null;
+      if (!noData) {
+        const mgmt =
+          previous && cases.length === 0 && founders.length === 0
+            ? previous
+            : analyze({ founders, cases, promoterHolding: ph });
+        entry.management = mgmt;
+        scored += 1;
+        console.log(`management: ${sym} -> ${mgmt.grade} (${mgmt.score}/100, ${mgmt.cases.length} cases flagged)`);
+      } else {
+        console.log(`management: ${sym} -> skipped (no data sources reachable)`);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(POOL_SIZE, tasks.length) }, worker));
+
   writeFileSync(ANALYSIS_FILE, JSON.stringify(analysis));
-  console.log(`management: ${done} stocks scored`);
+  console.log(`management: ${scored}/${tasks.length} stocks scored (cap=${max})`);
 }
 
 main().catch((e) => {
