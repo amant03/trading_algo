@@ -29,6 +29,7 @@ interface StrategyRow {
 
 interface TradeRow {
   day: string;
+  time?: string;
   strategy: string;
   symbol: string;
   side: 'BUY' | 'SELL';
@@ -68,11 +69,45 @@ interface PaperReport {
   history: { date: string; equity: number; cash: number; invested: number }[];
 }
 
+const DAILY_URLS = [
+  'https://cdn.jsdelivr.net/gh/amant03/trading_algo@automation-data/frontend/public/paper/daily.json',
+  'https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/paper/daily.json',
+  '/paper/daily.json',
+];
+
+interface DailyReport {
+  ts: string;
+  today: {
+    date: string;
+    startCapital: number;
+    capital: number;
+    equity: number;
+    realizedPnl: number;
+    dayPnl: number;
+    wins: number;
+    losses: number;
+    trades: TradeRow[];
+    open: { strategy: string; symbol: string; qty: number; entryPrice: number; lastPrice: number }[];
+    status: 'pre-open' | 'open' | 'closed' | 'holiday';
+    bars: number;
+    updatedAt: string;
+  } | null;
+  days: { date: string; capital: number; equity: number; realizedPnl: number; dayPnl: number; wins: number; trades: number; winPct?: number | null }[];
+}
+
 const PAPER_URLS = [
   '/paper/latest.json',
   'https://cdn.jsdelivr.net/gh/amant03/trading_algo@automation-data/frontend/public/paper/latest.json',
   'https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/paper/latest.json',
 ];
+
+const STRAT_META_LABELS = new Map([
+  ['ma_cross', 'MA Cross'],
+  ['rsi_reversal', 'RSI Reversal'],
+  ['macd_cross', 'MACD Cross'],
+  ['bb_breakout', 'Bollinger'],
+  ['supertrend', 'Supertrend'],
+]);
 
 const inr = (n: number | null | undefined, digits = 0): string =>
   n == null || !isFinite(n) ? '—' : `₹${n.toLocaleString('en-IN', { maximumFractionDigits: digits })}`;
@@ -101,6 +136,7 @@ function Spark({ series }: { series: { equity: number }[] }) {
 
 export default function Paper() {
   const [report, setReport] = useState<PaperReport | null>(null);
+  const [daily, setDaily] = useState<DailyReport | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
@@ -134,6 +170,27 @@ export default function Paper() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    let live = true;
+    const load = async () => {
+      for (const url of DAILY_URLS) {
+        try {
+          const res = await fetch(url, { cache: 'no-store' });
+          if (!res.ok) continue;
+          const ct = res.headers.get('content-type') ?? '';
+          if (ct.includes('text/html')) continue;
+          const data = (await res.json()) as DailyReport;
+          if (!data?.today) continue;
+          if (live) setDaily(data);
+          return;
+        } catch { /* try next */ }
+      }
+    };
+    void load();
+    const t = setInterval(load, 30_000);
+    return () => { live = false; clearInterval(t); };
+  }, []);
+
   const r = report;
 
   return (
@@ -154,9 +211,128 @@ export default function Paper() {
       </div>
 
       {err && <div className="empty">{err}</div>}
-      {!r && !err && <div className="empty">Loading paper account…</div>}
+      {!r && !err && !daily && <div className="empty">Loading paper account…</div>}
+
+      {/* ================= Daily Paper trade ================= */}
+      {daily && daily.today && (
+        <div className="panel reveal" style={{ marginBottom: 16 }}>
+          <div className="panel-title">
+            <h3>Daily Paper trade</h3>
+            <span className="hint">
+              fresh ₹1,00,000 · 5 methods · intraday 5-min bars
+              {daily.today.status === 'open' && ' · market open'}
+              {daily.today.status === 'closed' && ' · session closed'}
+              {daily.today.status === 'holiday' && ' · no session today'}
+            </span>
+          </div>
+          <div className="stat-grid" style={{ marginBottom: 12 }}>
+            <div className="stat-card">
+              <div className="stat-label">Day P&L</div>
+              <div className={clsPnL(daily.today.dayPnl)}>{inr(daily.today.dayPnl)}</div>
+              <div className="stat-sub">
+                {daily.today.dayPnl >= 0 ? '+' : ''}{((daily.today.dayPnl / daily.today.startCapital) * 100).toFixed(2)}%
+                · {daily.today.wins}W / {daily.today.losses}L
+              </div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Equity</div>
+              <div className="mono">{inr(daily.today.equity)}</div>
+              <div className="stat-sub">{daily.today.bars} bars · status {daily.today.status}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Cash</div>
+              <div className="mono">{inr(daily.today.capital)}</div>
+              <div className="stat-sub">{((daily.today.capital / daily.today.startCapital) * 100).toFixed(1)}% parked</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Open positions</div>
+              <div className="mono">{daily.today.open.length}</div>
+              <div className="stat-sub">refreshes every 30s during market hours</div>
+            </div>
+          </div>
+
+          {daily.today.open.length > 0 && (
+            <div className="table" style={{ marginBottom: 12 }}>
+              <div className="tr head">
+                <span>Method</span><span>Symbol</span><span>Qty</span><span>Entry</span><span>Last</span><span>Unrealised</span>
+              </div>
+              {daily.today.open.map((o) => {
+                const ret = ((o.lastPrice / o.entryPrice) - 1) * 100;
+                return (
+                  <div key={o.strategy} className="tr">
+                    <span className="muted">{STRAT_META_LABELS.get(o.strategy) ?? o.strategy}</span>
+                    <span><a className="mono" href={`#/stock/${o.symbol}`}>{o.symbol}</a></span>
+                    <span className="mono">{o.qty}</span>
+                    <span className="mono">{inr(o.entryPrice, 2)}</span>
+                    <span className="mono">{inr(o.lastPrice, 2)}</span>
+                    <span className={clsPnL((o.lastPrice - o.entryPrice) * o.qty)}>
+                      {inr((o.lastPrice - o.entryPrice) * o.qty)} ({ret >= 0 ? '+' : ''}{ret.toFixed(1)}%)
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {daily.today.trades.length > 0 && (
+            <div className="table paper-ledger">
+              <div className="tr head">
+                <span>Time</span><span>Method</span><span>Symbol</span><span>Side</span><span>Qty</span><span>Price</span><span>P&L</span><span>Why</span>
+              </div>
+              {daily.today.trades.map((t, i) => (
+                <div key={i} className="tr">
+                  <span className="mono muted">{t.time}</span>
+                  <span className="muted">{STRAT_META_LABELS.get(t.strategy) ?? t.strategy}</span>
+                  <span className="mono">{t.symbol}</span>
+                  <span className={t.side === 'BUY' ? 'up' : 'down'}>{t.side}</span>
+                  <span className="mono">{t.qty}</span>
+                  <span className="mono">{inr(t.price, 2)}</span>
+                  <span className={clsPnL(t.pnl)}>{t.side === 'SELL' ? `${inr(t.pnl)}${t.retPct != null ? ` (${t.retPct >= 0 ? '+' : ''}${t.retPct}%)` : ''}` : '—'}</span>
+                  <span className="muted" style={{ fontSize: 12 }}>{t.reason}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {daily.days.length > 0 && (
+            <div style={{ marginTop: 10, padding: '8px 4px 0', borderTop: '1px solid rgba(148,163,184,0.08)' }}>
+              <div className="muted" style={{ fontSize: 12, marginBottom: 6, fontWeight: 600 }}>Recent days</div>
+              <div className="table">
+                <div className="tr head">
+                  <span>Date</span><span>P&L</span><span>Trades</span><span>Win %</span>
+                </div>
+                {daily.days.slice(0, 10).map((d) => (
+                  <div key={d.date} className="tr">
+                    <span className="mono muted">{d.date}</span>
+                    <span className={clsPnL(d.dayPnl)}>{inr(d.dayPnl)} ({d.dayPnl >= 0 ? '+' : ''}{((d.dayPnl / 100000) * 100).toFixed(2)}%)</span>
+                    <span className="mono">{d.trades}</span>
+                    <span className="mono">{d.winPct != null ? `${d.winPct}%` : '—'}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      {!daily && (
+        <div className="panel reveal" style={{ marginBottom: 16 }}>
+          <div className="panel-title">
+            <h3>Daily Paper trade</h3>
+            <span className="hint">fresh ₹1,00,000 every market day · intraday 5-min bars · 5 methods</span>
+          </div>
+          <div className="empty">Daily paper trades refresh during market hours — first session runs at 09:16 IST.</div>
+        </div>
+      )}
+      {/* ================= End Daily Paper trade ================= */}
+
       {r && (
         <div>
+          <div className="panel reveal" style={{ marginBottom: 12, padding: '10px 12px' }}>
+            <div className="panel-title" style={{ marginBottom: 0 }}>
+              <h3>Swing Lab</h3>
+              <span className="hint">₹1,00,000 · 5 buckets · multi-day hold · daily close replay</span>
+            </div>
+          </div>
           <div className="stat-grid" style={{ marginBottom: 16 }}>
             <div className="stat-card">
               <div className="stat-label">Day P&L</div>

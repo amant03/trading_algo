@@ -2,11 +2,13 @@ name: Backend Automation
 
 on:
   schedule:
-    # Market-hours news runs: every 2 hours during the NSE cash session
-    # (10:00 / 12:00 / 14:00 IST, Mon–Fri). Cheap: Google News RSS + a small
-    # symbol cap — no DB, no services. Prices stream separately via the
-    # frontend /api/live + /api/chart relays.
-    - cron: '30 4,6,8 * * 1-5'
+    # Market-hours runs: during the NSE cash session (Mon–Fri).
+    # 09:16 IST (pre-open snapshot + intraday open), 10:00/12:00/14:00 IST
+    # (news refresh + paper stops + daily paper trade updates).
+    # Cheap: Google News RSS + Yahoo intraday bars + a small symbol cap.
+    - cron: '46 3,30 4,6,8 * * 1-5'
+    # 15:45 IST post-close snapshot — finalises the daily paper trade result.
+    - cron: '15 10 * * 1-5'
     # Once-a-day deep run (03:00 IST): strategy window + report + fundamentals
     # (DB seed + nightly market-cap-ordered coverage batch) + management +
     # full-set news. Also promotes the snapshot to main.
@@ -71,7 +73,8 @@ jobs:
     steps:
       - name: Resolve run mode
         run: |
-          if [ "${{ github.event.schedule }}" = "30 4,6,8 * * 1-5" ]; then
+          if [ "${{ github.event.schedule }}" = "46 3,30 4,6,8 * * 1-5" ] || \
+             [ "${{ github.event.schedule }}" = "15 10 * * 1-5" ]; then
             echo "MODE=news" >> "$GITHUB_ENV"
           else
             echo "MODE=full" >> "$GITHUB_ENV"
@@ -100,6 +103,8 @@ jobs:
           mkdir -p frontend/public/paper
           curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/paper/state.json \
             -o frontend/public/paper/state.json || echo "no paper state yet"
+          curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/paper/daily.json \
+            -o frontend/public/paper/daily.json || echo "no daily paper state yet"
 
       - name: Paper live-stop (market hours)
         if: env.MODE == 'news'
@@ -107,6 +112,10 @@ jobs:
         env:
           PAPER_LIVE_ONLY: '1'
           LIVE_STOP_CHECK: '1'
+
+      - name: Daily Paper trade (market hours)
+        if: env.MODE == 'news'
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/paper-daily.ts
 
       # ---- full pipeline (once a day + manual) ----------------------------
       - name: Apply database schema
@@ -191,6 +200,8 @@ jobs:
           mkdir -p frontend/public/paper
           curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/paper/state.json \
             -o frontend/public/paper/state.json || echo "no previous paper state — first seed run"
+          curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/paper/daily.json \
+            -o frontend/public/paper/daily.json || echo "no previous daily paper state — first seed run"
 
       # Paper trading: 5 classic strategies on a ₹1,00,000 virtual account,
       # advanced one trading day per run (see scripts/ci/paper.ts).
@@ -199,6 +210,12 @@ jobs:
         run: node node_modules/tsx/dist/cli.mjs scripts/ci/paper.ts
         env:
           LIVE_STOP_CHECK: '1'
+
+      # Daily Paper trade: fresh ₹1,00,000 every market day, intraday on
+      # 5-min bars, all positions squared off at session close.
+      - name: Daily Paper trade
+        if: env.MODE == 'full'
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/paper-daily.ts
 
       - name: Job summary
         if: always()

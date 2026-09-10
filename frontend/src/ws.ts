@@ -439,26 +439,26 @@ function stopRelay(): void {
   }
 }
 
-/** Last-resort datasets: CI commits a fresh snapshot to the automation-data
- *  branch on every run (fetched live, no redeploy needed); the bundle also
- *  ships frontend/public/snapshot.json as a second fallback. */
+/** Live datasets: CI commits a fresh snapshot to the automation-data branch on
+ *  every run (fetched live, no redeploy needed); the bundle's copies are a
+ *  last-resort fallback only. Automation-data first, then the bundle. */
 const SNAPSHOT_URLS = [
-  '/snapshot.json',
   'https://cdn.jsdelivr.net/gh/amant03/trading_algo@automation-data/frontend/public/snapshot.json',
   'https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/snapshot.json',
   'https://cdn.jsdelivr.net/gh/amant03/trading_algo@main/frontend/public/snapshot.json',
+  '/snapshot.json',
 ];
 
 const ANALYSIS_URLS = [
-  '/analysis.json',
   'https://cdn.jsdelivr.net/gh/amant03/trading_algo@automation-data/frontend/public/analysis.json',
   'https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/analysis.json',
+  '/analysis.json',
 ];
 
 const NEWS_URLS = [
-  '/news.json',
   'https://cdn.jsdelivr.net/gh/amant03/trading_algo@automation-data/frontend/public/news.json',
   'https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/news.json',
+  '/news.json',
 ];
 
 async function loadJson<T>(urls: string[]): Promise<T | null> {
