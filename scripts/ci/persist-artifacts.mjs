@@ -7,6 +7,8 @@
 //   * analysis.json — remote entries we don't have are carried in (never drop
 //     a freshly imported symbol), ours win on a symbol conflict.
 //   * news.json — every symbol's item list is merged (ours wins per title).
+//   * signals.json — remote symbols we don't have are carried in (a run with
+//     partial Yahoo failures never drops a symbol a previous run had).
 //   * snapshot.json / paper/* / reports/* — local (generated this run) wins.
 //
 // Reads the branch via raw.githubusercontent.com (public repo, no auth). No deps.
@@ -95,9 +97,39 @@ async function unionNews() {
   console.log(`merge-artifacts: news union +${added} remote symbols -> ${local.symbols} total`);
 }
 
+async function unionSignals() {
+  const local = readJson('signals.json');
+  const remoteRaw = await fetchRemote('signals.json');
+  if (!local) return;
+  if (!remoteRaw) return;
+  let remote;
+  try {
+    remote = JSON.parse(remoteRaw);
+  } catch {
+    return;
+  }
+  if (!remote?.data) return;
+  const data = local.data ?? {};
+  let addedSyms = 0;
+  let addedSigs = 0;
+  for (const [sym, list] of Object.entries(remote.data)) {
+    if (!(sym in data)) {
+      data[sym] = list;
+      addedSyms += 1;
+      addedSigs += Array.isArray(list) ? list.length : 0;
+    }
+  }
+  local.data = data;
+  local.symbols = Object.keys(data).length;
+  local.totalSignals = Object.values(data).reduce((a, l) => a + (Array.isArray(l) ? l.length : 0), 0);
+  writeFileSync(join(PUBLIC, 'signals.json'), JSON.stringify(local));
+  console.log(`merge-artifacts: signals union +${addedSyms} remote symbols (+${addedSigs} signals) -> ${local.symbols} total`);
+}
+
 async function main() {
   await unionAnalysis();
   await unionNews();
+  await unionSignals();
   // sanity: refresh any gating artifact that was only present upstream
   for (const rel of ['snapshot.json', 'paper/latest.json', 'paper/state.json', 'paper/daily.json', 'signals.json']) {
     if (!existsSync(join(PUBLIC, rel))) {

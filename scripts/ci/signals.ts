@@ -31,6 +31,7 @@ import {
   clamp,
   round2,
 } from '@trading/shared';
+import { INSTRUMENTS as SEED } from '../../services/shared/src/instruments-data.js';
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36';
@@ -74,15 +75,11 @@ const STRATEGIES = [
 
 function loadUniverse(): string[] {
   const symbols = new Set<string>();
-  // SEED first (the52 NIFTY-50 names from instruments-data)
-  try {
-    const instruments = JSON.parse(
-      readFileSync(join(process.cwd(), 'services', 'shared', 'src', 'instruments-data.ts'), 'utf8'),
-    );
-    // The file is TypeScript; extract symbols via regex
-    const matches = instruments.matchAll(/symbol:\s*'([^']+)'/g);
-    for (const m of matches) symbols.add(m[1]);
-  } catch { /* skip */ }
+  // SEED first (the 52 NIFTY-50 names) — direct import, always available
+  // even in market-hours runs where analysis.json is not pre-staged.
+  for (const s of SEED) {
+    if (s?.symbol) symbols.add(s.symbol);
+  }
   // Then every covered symbol in analysis.json
   if (existsSync(ANALYSIS_FILE)) {
     try {
