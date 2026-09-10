@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 
 interface PosRow {
   strategy: string;
@@ -96,9 +96,9 @@ interface DailyReport {
 }
 
 const PAPER_URLS = [
-  '/paper/latest.json',
   'https://cdn.jsdelivr.net/gh/amant03/trading_algo@automation-data/frontend/public/paper/latest.json',
   'https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/paper/latest.json',
+  '/paper/latest.json',
 ];
 
 const STRAT_META_LABELS = new Map([
@@ -109,10 +109,39 @@ const STRAT_META_LABELS = new Map([
   ['supertrend', 'Supertrend'],
 ]);
 
+const STRAT_EXPLANATIONS: Record<string, { name: string; url: string; desc: string }> = {
+  ma_cross: {
+    name: 'Moving Average Crossover',
+    url: 'https://www.investopedia.com/terms/m/movingaverage.asp',
+    desc: 'Buy when the short-term average crosses above the long-term average (golden cross), sell on the reverse (death cross).',
+  },
+  rsi_reversal: {
+    name: 'RSI Reversal',
+    url: 'https://www.investopedia.com/terms/r/rsi.asp',
+    desc: 'Buy when RSI exits oversold territory (<30), sell when it exits overbought (>70). Catches reversals in oversold stocks.',
+  },
+  macd_cross: {
+    name: 'MACD Crossover',
+    url: 'https://www.investopedia.com/terms/m/macd.asp',
+    desc: 'Buy when the MACD histogram crosses above zero (bullish momentum), sell on the bearish cross below zero.',
+  },
+  bb_breakout: {
+    name: 'Bollinger Band Breakout',
+    url: 'https://www.investopedia.com/terms/b/bollingerbands.asp',
+    desc: 'Buy when price breaks above the upper Bollinger Band (2σ), sell on a break below the lower band.',
+  },
+  supertrend: {
+    name: 'Supertrend',
+    url: 'https://www.investopedia.com/terms/s/supertrend-indicator.asp',
+    desc: 'Buy when the Supertrend indicator flips from down to up (bullish trend), sell on the flip to down.',
+  },
+};
+
 const inr = (n: number | null | undefined, digits = 0): string =>
   n == null || !isFinite(n) ? '—' : `₹${n.toLocaleString('en-IN', { maximumFractionDigits: digits })}`;
 
 const pnlCls = (n: number | null | undefined): string => (n == null ? '' : n > 0.005 ? 'up' : n < -0.005 ? 'down' : '');
+const clsPnL = pnlCls;
 
 function Spark({ series }: { series: { equity: number }[] }) {
   if (series.length < 2) return <div className="empty" style={{ minHeight: 120 }}>Equity curve builds after the first daily runs.</div>;
@@ -131,6 +160,204 @@ function Spark({ series }: { series: { equity: number }[] }) {
       <polyline points={pts} fill="none" stroke={color} strokeWidth="2" />
       <circle cx={w - 2} cy={lastY} r="3.2" fill={color} />
     </svg>
+  );
+}
+
+function PnLStatement({
+  label,
+  capital,
+  realized,
+  unrealized,
+  equity,
+  wins,
+  losses,
+  trades,
+  holdingPeriod,
+}: {
+  label: string;
+  capital: number;
+  realized: number;
+  unrealized: number;
+  equity: number;
+  wins: number;
+  losses: number;
+  trades: number;
+  holdingPeriod?: string;
+}) {
+  const totalPnl = realized + unrealized;
+  const totalRet = ((equity - capital) / capital) * 100;
+  const winRate = trades > 0 ? ((wins / trades) * 100).toFixed(0) : '—';
+  return (
+    <div className="panel reveal" style={{ marginBottom: 12, padding: '12px 16px' }}>
+      <div className="panel-title" style={{ marginBottom: 8 }}>
+        <h3>{label}</h3>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '6px 16px', fontSize: 13 }}>
+        <div><span className="muted">Capital:</span> {inr(capital)}</div>
+        <div><span className="muted">Realised P&L:</span> <span className={clsPnL(realized)}>{inr(realized)}</span></div>
+        <div><span className="muted">Unrealised P&L:</span> <span className={clsPnL(unrealized)}>{inr(unrealized)}</span></div>
+        <div><span className="muted">Total P&L:</span> <span className={clsPnL(totalPnl)}>{inr(totalPnl)} ({totalRet >= 0 ? '+' : ''}{totalRet.toFixed(2)}%)</span></div>
+        <div><span className="muted">Equity:</span> {inr(equity)}</div>
+        <div><span className="muted">Trades:</span> {trades} · Win rate: {winRate}% ({wins}W / {losses}L)</div>
+        {holdingPeriod && <div><span className="muted">Holding:</span> {holdingPeriod}</div>}
+      </div>
+    </div>
+  );
+}
+
+type SortKey = 'day' | 'time' | 'strategy' | 'symbol' | 'side' | 'qty' | 'price' | 'pnl' | 'reason';
+
+function DailyTradesTable({ trades }: { trades: TradeRow[] }) {
+  const [sortKey, setSortKey] = useState<SortKey>('time');
+  const [sortAsc, setSortAsc] = useState(false);
+
+  const sorted = useMemo(() => {
+    const sells = trades.filter((t) => t.side === 'SELL');
+    const sorted = [...sells].sort((a, b) => {
+      let av: number | string, bv: number | string;
+      switch (sortKey) {
+        case 'time': av = a.time ?? ''; bv = b.time ?? ''; break;
+        case 'strategy': av = a.strategy; bv = b.strategy; break;
+        case 'symbol': av = a.symbol; bv = b.symbol; break;
+        case 'side': av = a.side; bv = b.side; break;
+        case 'qty': av = a.qty; bv = b.qty; break;
+        case 'price': av = a.price; bv = b.price; break;
+        case 'pnl': av = a.pnl; bv = b.pnl; break;
+        case 'reason': av = a.reason; bv = b.reason; break;
+        default: av = a.time ?? ''; bv = b.time ?? '';
+      }
+      if (typeof av === 'string') return sortAsc ? av.localeCompare(bv as string) : (bv as string).localeCompare(av);
+      return sortAsc ? (av as number) - (bv as number) : (bv as number) - (av as number);
+    });
+    return sorted;
+  }, [trades, sortKey, sortAsc]);
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) setSortAsc(!sortAsc);
+    else { setSortKey(key); setSortAsc(key === 'reason'); }
+  };
+
+  const arrow = (key: SortKey) => sortKey === key ? (sortAsc ? ' ▲' : ' ▼') : '';
+
+  return (
+    <div className="table paper-ledger">
+      <div className="tr head">
+        <span onClick={() => toggleSort('time')} style={{ cursor: 'pointer' }}>Time{arrow('time')}</span>
+        <span onClick={() => toggleSort('strategy')} style={{ cursor: 'pointer' }}>Method{arrow('strategy')}</span>
+        <span onClick={() => toggleSort('symbol')} style={{ cursor: 'pointer' }}>Symbol{arrow('symbol')}</span>
+        <span onClick={() => toggleSort('side')} style={{ cursor: 'pointer' }}>Side{arrow('side')}</span>
+        <span onClick={() => toggleSort('qty')} style={{ cursor: 'pointer' }}>Qty{arrow('qty')}</span>
+        <span onClick={() => toggleSort('price')} style={{ cursor: 'pointer' }}>Price{arrow('price')}</span>
+        <span onClick={() => toggleSort('pnl')} style={{ cursor: 'pointer' }}>P&L{arrow('pnl')}</span>
+        <span onClick={() => toggleSort('reason')} style={{ cursor: 'pointer' }}>Why{arrow('reason')}</span>
+      </div>
+      {sorted.map((t, i) => (
+        <div key={i} className="tr">
+          <span className="mono muted">{t.time}</span>
+          <span className="muted">{STRAT_META_LABELS.get(t.strategy) ?? t.strategy}</span>
+          <span className="mono">{t.symbol}</span>
+          <span className={t.side === 'BUY' ? 'up' : 'down'}>{t.side}</span>
+          <span className="mono">{t.qty}</span>
+          <span className="mono">{inr(t.price, 2)}</span>
+          <span className={clsPnL(t.pnl)}>{inr(t.pnl)}{t.retPct != null ? ` (${t.retPct >= 0 ? '+' : ''}${t.retPct}%)` : ''}</span>
+          <span className="muted" style={{ fontSize: 12 }}>{t.reason}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SwingTradesTable({ trades }: { trades: TradeRow[] }) {
+  const [sortKey, setSortKey] = useState<SortKey>('day');
+  const [sortAsc, setSortAsc] = useState(false);
+
+  const sorted = useMemo(() => {
+    const sorted = [...trades].sort((a, b) => {
+      let av: number | string, bv: number | string;
+      switch (sortKey) {
+        case 'day': av = a.day; bv = b.day; break;
+        case 'strategy': av = a.strategy; bv = b.strategy; break;
+        case 'symbol': av = a.symbol; bv = b.symbol; break;
+        case 'side': av = a.side; bv = b.side; break;
+        case 'qty': av = a.qty; bv = b.qty; break;
+        case 'price': av = a.price; bv = b.price; break;
+        case 'pnl': av = a.pnl; bv = b.pnl; break;
+        case 'reason': av = a.reason; bv = b.reason; break;
+        default: av = a.day; bv = b.day;
+      }
+      if (typeof av === 'string') return sortAsc ? av.localeCompare(bv as string) : (bv as string).localeCompare(av);
+      return sortAsc ? (av as number) - (bv as number) : (bv as number) - (av as number);
+    });
+    return sorted;
+  }, [trades, sortKey, sortAsc]);
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) setSortAsc(!sortAsc);
+    else { setSortKey(key); setSortAsc(key === 'reason'); }
+  };
+
+  const arrow = (key: SortKey) => sortKey === key ? (sortAsc ? ' ▲' : ' ▼') : '';
+
+  return (
+    <div className="table paper-ledger">
+      <div className="tr head">
+        <span onClick={() => toggleSort('day')} style={{ cursor: 'pointer' }}>Day{arrow('day')}</span>
+        <span onClick={() => toggleSort('strategy')} style={{ cursor: 'pointer' }}>Method{arrow('strategy')}</span>
+        <span onClick={() => toggleSort('symbol')} style={{ cursor: 'pointer' }}>Symbol{arrow('symbol')}</span>
+        <span onClick={() => toggleSort('side')} style={{ cursor: 'pointer' }}>Side{arrow('side')}</span>
+        <span onClick={() => toggleSort('qty')} style={{ cursor: 'pointer' }}>Qty{arrow('qty')}</span>
+        <span onClick={() => toggleSort('price')} style={{ cursor: 'pointer' }}>Price{arrow('price')}</span>
+        <span onClick={() => toggleSort('pnl')} style={{ cursor: 'pointer' }}>P&L{arrow('pnl')}</span>
+        <span onClick={() => toggleSort('reason')} style={{ cursor: 'pointer' }}>Why{arrow('reason')}</span>
+      </div>
+      {sorted.map((t, i) => (
+        <div key={i} className="tr">
+          <span className="mono muted">{t.day}</span>
+          <span className="muted">{STRAT_META_LABELS.get(t.strategy) ?? t.strategy}</span>
+          <span className="mono">{t.symbol}</span>
+          <span className={t.side === 'BUY' ? 'up' : 'down'}>{t.side}</span>
+          <span className="mono">{t.qty}</span>
+          <span className="mono">{inr(t.price, 2)}</span>
+          <span className={clsPnL(t.pnl)}>{t.side === 'SELL' ? `${inr(t.pnl)}${t.retPct != null ? ` (${t.retPct >= 0 ? '+' : ''}${t.retPct}%)` : ''}` : '—'}</span>
+          <span className="muted" style={{ fontSize: 12 }}>{t.reason}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MethodGuide() {
+  return (
+    <div className="panel reveal" style={{ marginBottom: 12, padding: '12px 16px' }}>
+      <div className="panel-title" style={{ marginBottom: 8 }}>
+        <h3>Method guide</h3>
+        <span className="hint">tap a method to learn more</span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
+        {Object.entries(STRAT_EXPLANATIONS).map(([id, info]) => (
+          <a
+            key={id}
+            href={info.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: 'block',
+              padding: '8px 10px',
+              borderRadius: 6,
+              border: '1px solid rgba(148,163,184,0.12)',
+              background: 'rgba(148,163,184,0.04)',
+              textDecoration: 'none',
+              color: 'var(--text)',
+              fontSize: 12.5,
+              lineHeight: 1.5,
+            }}
+          >
+            <div style={{ fontWeight: 600, marginBottom: 2, color: 'var(--cyan)' }}>{info.name} ↗</div>
+            <div className="muted" style={{ fontSize: 11.5 }}>{info.desc}</div>
+          </a>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -192,6 +419,7 @@ export default function Paper() {
   }, []);
 
   const r = report;
+  const d = daily?.today;
 
   return (
     <div>
@@ -213,106 +441,111 @@ export default function Paper() {
       {err && <div className="empty">{err}</div>}
       {!r && !err && !daily && <div className="empty">Loading paper account…</div>}
 
+      <MethodGuide />
+
       {/* ================= Daily Paper trade ================= */}
-      {daily && daily.today && (
-        <div className="panel reveal" style={{ marginBottom: 16 }}>
-          <div className="panel-title">
-            <h3>Daily Paper trade</h3>
-            <span className="hint">
-              fresh ₹1,00,000 · 5 methods · intraday 5-min bars
-              {daily.today.status === 'open' && ' · market open'}
-              {daily.today.status === 'closed' && ' · session closed'}
-              {daily.today.status === 'holiday' && ' · no session today'}
-            </span>
-          </div>
-          <div className="stat-grid" style={{ marginBottom: 12 }}>
-            <div className="stat-card">
-              <div className="stat-label">Day P&L</div>
-              <div className={clsPnL(daily.today.dayPnl)}>{inr(daily.today.dayPnl)}</div>
-              <div className="stat-sub">
-                {daily.today.dayPnl >= 0 ? '+' : ''}{((daily.today.dayPnl / daily.today.startCapital) * 100).toFixed(2)}%
-                · {daily.today.wins}W / {daily.today.losses}L
-              </div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-label">Equity</div>
-              <div className="mono">{inr(daily.today.equity)}</div>
-              <div className="stat-sub">{daily.today.bars} bars · status {daily.today.status}</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-label">Cash</div>
-              <div className="mono">{inr(daily.today.capital)}</div>
-              <div className="stat-sub">{((daily.today.capital / daily.today.startCapital) * 100).toFixed(1)}% parked</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-label">Open positions</div>
-              <div className="mono">{daily.today.open.length}</div>
-              <div className="stat-sub">refreshes every 30s during market hours</div>
-            </div>
-          </div>
+      {d && (
+        <>
+          <PnLStatement
+            label="Daily Paper trade — P&L"
+            capital={d.startCapital}
+            realized={d.realizedPnl}
+            unrealized={d.open.reduce((a, p) => a + (p.lastPrice - p.entryPrice) * p.qty, 0)}
+            equity={d.equity}
+            wins={d.wins}
+            losses={d.losses}
+            trades={d.trades.filter((t) => t.side === 'SELL').length}
+            holdingPeriod="intraday — all positions closed at session end"
+          />
 
-          {daily.today.open.length > 0 && (
-            <div className="table" style={{ marginBottom: 12 }}>
-              <div className="tr head">
-                <span>Method</span><span>Symbol</span><span>Qty</span><span>Entry</span><span>Last</span><span>Unrealised</span>
-              </div>
-              {daily.today.open.map((o) => {
-                const ret = ((o.lastPrice / o.entryPrice) - 1) * 100;
-                return (
-                  <div key={o.strategy} className="tr">
-                    <span className="muted">{STRAT_META_LABELS.get(o.strategy) ?? o.strategy}</span>
-                    <span><a className="mono" href={`#/stock/${o.symbol}`}>{o.symbol}</a></span>
-                    <span className="mono">{o.qty}</span>
-                    <span className="mono">{inr(o.entryPrice, 2)}</span>
-                    <span className="mono">{inr(o.lastPrice, 2)}</span>
-                    <span className={clsPnL((o.lastPrice - o.entryPrice) * o.qty)}>
-                      {inr((o.lastPrice - o.entryPrice) * o.qty)} ({ret >= 0 ? '+' : ''}{ret.toFixed(1)}%)
-                    </span>
-                  </div>
-                );
-              })}
+          <div className="panel reveal" style={{ marginBottom: 16 }}>
+            <div className="panel-title">
+              <h3>Daily Paper trade</h3>
+              <span className="hint">
+                fresh ₹1,00,000 · 5 methods · intraday 5-min bars
+                {d.status === 'open' && ' · market open'}
+                {d.status === 'closed' && ' · session closed'}
+                {d.status === 'holiday' && ' · no session today'}
+              </span>
             </div>
-          )}
-
-          {daily.today.trades.length > 0 && (
-            <div className="table paper-ledger">
-              <div className="tr head">
-                <span>Time</span><span>Method</span><span>Symbol</span><span>Side</span><span>Qty</span><span>Price</span><span>P&L</span><span>Why</span>
-              </div>
-              {daily.today.trades.map((t, i) => (
-                <div key={i} className="tr">
-                  <span className="mono muted">{t.time}</span>
-                  <span className="muted">{STRAT_META_LABELS.get(t.strategy) ?? t.strategy}</span>
-                  <span className="mono">{t.symbol}</span>
-                  <span className={t.side === 'BUY' ? 'up' : 'down'}>{t.side}</span>
-                  <span className="mono">{t.qty}</span>
-                  <span className="mono">{inr(t.price, 2)}</span>
-                  <span className={clsPnL(t.pnl)}>{t.side === 'SELL' ? `${inr(t.pnl)}${t.retPct != null ? ` (${t.retPct >= 0 ? '+' : ''}${t.retPct}%)` : ''}` : '—'}</span>
-                  <span className="muted" style={{ fontSize: 12 }}>{t.reason}</span>
+            <div className="stat-grid" style={{ marginBottom: 12 }}>
+              <div className="stat-card">
+                <div className="stat-label">Day P&L</div>
+                <div className={clsPnL(d.dayPnl)}>{inr(d.dayPnl)}</div>
+                <div className="stat-sub">
+                  {d.dayPnl >= 0 ? '+' : ''}{((d.dayPnl / d.startCapital) * 100).toFixed(2)}%
+                  · {d.wins}W / {d.losses}L
                 </div>
-              ))}
+              </div>
+              <div className="stat-card">
+                <div className="stat-label">Equity</div>
+                <div className="mono">{inr(d.equity)}</div>
+                <div className="stat-sub">{d.bars} bars · status {d.status}</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-label">Cash</div>
+                <div className="mono">{inr(d.capital)}</div>
+                <div className="stat-sub">{((d.capital / d.startCapital) * 100).toFixed(1)}% parked</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-label">Open positions</div>
+                <div className="mono">{d.open.length}</div>
+                <div className="stat-sub">refreshes every 30s during market hours</div>
+              </div>
             </div>
-          )}
 
-          {daily.days.length > 0 && (
-            <div style={{ marginTop: 10, padding: '8px 4px 0', borderTop: '1px solid rgba(148,163,184,0.08)' }}>
-              <div className="muted" style={{ fontSize: 12, marginBottom: 6, fontWeight: 600 }}>Recent days</div>
-              <div className="table">
+            {d.open.length > 0 && (
+              <div className="table" style={{ marginBottom: 12 }}>
                 <div className="tr head">
-                  <span>Date</span><span>P&L</span><span>Trades</span><span>Win %</span>
+                  <span>Method</span><span>Symbol</span><span>Qty</span><span>Entry</span><span>Last</span><span>Unrealised</span>
                 </div>
-                {daily.days.slice(0, 10).map((d) => (
-                  <div key={d.date} className="tr">
-                    <span className="mono muted">{d.date}</span>
-                    <span className={clsPnL(d.dayPnl)}>{inr(d.dayPnl)} ({d.dayPnl >= 0 ? '+' : ''}{((d.dayPnl / 100000) * 100).toFixed(2)}%)</span>
-                    <span className="mono">{d.trades}</span>
-                    <span className="mono">{d.winPct != null ? `${d.winPct}%` : '—'}</span>
-                  </div>
-                ))}
+                {d.open.map((o) => {
+                  const ret = ((o.lastPrice / o.entryPrice) - 1) * 100;
+                  const info = STRAT_EXPLANATIONS[o.strategy];
+                  return (
+                    <div key={o.strategy} className="tr">
+                      <span className="muted">
+                        {info ? (
+                          <a href={info.url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--cyan)', textDecoration: 'none' }}>
+                            {STRAT_META_LABELS.get(o.strategy) ?? o.strategy} ↗
+                          </a>
+                        ) : STRAT_META_LABELS.get(o.strategy) ?? o.strategy}
+                      </span>
+                      <span><a className="mono" href={`#/stock/${o.symbol}`}>{o.symbol}</a></span>
+                      <span className="mono">{o.qty}</span>
+                      <span className="mono">{inr(o.entryPrice, 2)}</span>
+                      <span className="mono">{inr(o.lastPrice, 2)}</span>
+                      <span className={clsPnL((o.lastPrice - o.entryPrice) * o.qty)}>
+                        {inr((o.lastPrice - o.entryPrice) * o.qty)} ({ret >= 0 ? '+' : ''}{ret.toFixed(1)}%)
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
-            </div>
-          )}
-        </div>
+            )}
+
+            {d.trades.length > 0 && <DailyTradesTable trades={d.trades} />}
+
+            {daily && daily.days.length > 0 && (
+              <div style={{ marginTop: 10, padding: '8px 4px 0', borderTop: '1px solid rgba(148,163,184,0.08)' }}>
+                <div className="muted" style={{ fontSize: 12, marginBottom: 6, fontWeight: 600 }}>Recent days</div>
+                <div className="table">
+                  <div className="tr head">
+                    <span>Date</span><span>P&L</span><span>Trades</span><span>Win %</span>
+                  </div>
+                  {daily.days.slice(0, 10).map((dd) => (
+                    <div key={dd.date} className="tr">
+                      <span className="mono muted">{dd.date}</span>
+                      <span className={clsPnL(dd.dayPnl)}>{inr(dd.dayPnl)} ({dd.dayPnl >= 0 ? '+' : ''}{((dd.dayPnl / 100000) * 100).toFixed(2)}%)</span>
+                      <span className="mono">{dd.trades}</span>
+                      <span className="mono">{dd.winPct != null ? `${dd.winPct}%` : '—'}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </>
       )}
       {!daily && (
         <div className="panel reveal" style={{ marginBottom: 16 }}>
@@ -327,6 +560,18 @@ export default function Paper() {
 
       {r && (
         <div>
+          <PnLStatement
+            label="Swing Lab — P&L"
+            capital={r.initialCapital}
+            realized={r.realizedPnl}
+            unrealized={r.unrealizedPnl}
+            equity={r.equity}
+            wins={r.strategies.reduce((a, s) => a + s.wins, 0)}
+            losses={r.strategies.reduce((a, s) => a + s.losses, 0)}
+            trades={r.strategies.reduce((a, s) => a + s.trades, 0)}
+            holdingPeriod={`${r.tradingDays} trading days processed · ${r.slPct ? `SL ${(r.slPct * 100).toFixed(0)}%` : '8% SL'} · 12% trailing · 20-day max hold`}
+          />
+
           <div className="panel reveal" style={{ marginBottom: 12, padding: '10px 12px' }}>
             <div className="panel-title" style={{ marginBottom: 0 }}>
               <h3>Swing Lab</h3>
@@ -373,27 +618,36 @@ export default function Paper() {
                 <span className="hint">₹20,000 allocated to each</span>
               </div>
               <div className="strat-grid">
-                {r.strategies.map((s) => (
-                  <div key={s.id} className="strat-card">
-                    <div className="strat-head">
-                      <span className="strat-name">{s.label}</span>
-                      <span className={clsPnL(s.pnl)}>{inr(s.pnl)}</span>
-                    </div>
-                    <div className="strat-row">
-                      <span>Equity</span><b>{inr(s.equity)}</b>
-                    </div>
-                    <div className="strat-row">
-                      <span>Book ₹{Math.round(s.allocPct)}% alloc</span>
-                      <b className="mono">{s.trades} trades</b>
-                    </div>
-                    {s.open && (
-                      <div className="strat-open">
-                        {s.open.symbol} · {s.open.qty} sh @ {inr(s.open.entryPrice)} · {s.open.heldDays}d
+                {r.strategies.map((s) => {
+                  const info = STRAT_EXPLANATIONS[s.id];
+                  return (
+                    <div key={s.id} className="strat-card">
+                      <div className="strat-head">
+                        <span className="strat-name">
+                          {info ? (
+                            <a href={info.url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--text)', textDecoration: 'none' }}>
+                              {s.label} ↗
+                            </a>
+                          ) : s.label}
+                        </span>
+                        <span className={clsPnL(s.pnl)}>{inr(s.pnl)}</span>
                       </div>
-                    )}
-                    {!s.open && <div className="strat-open muted">flat — in cash</div>}
-                  </div>
-                ))}
+                      <div className="strat-row">
+                        <span>Equity</span><b>{inr(s.equity)}</b>
+                      </div>
+                      <div className="strat-row">
+                        <span>Book ₹{Math.round(s.allocPct)}% alloc</span>
+                        <b className="mono">{s.trades} trades</b>
+                      </div>
+                      {s.open && (
+                        <div className="strat-open">
+                          {s.open.symbol} · {s.open.qty} sh @ {inr(s.open.entryPrice)} · {s.open.heldDays}d
+                        </div>
+                      )}
+                      {!s.open && <div className="strat-open muted">flat — in cash</div>}
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
@@ -435,39 +689,12 @@ export default function Paper() {
             <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.55, padding: '0 4px 10px' }}>
               Think of each method as a separate ₹20,000 envelope. A <b>BUY</b> spends the envelope on one stock when its rule fires.
               A <b>SELL</b> is either the rule reversing, the 8% safety-net (stop-loss) cutting a loser, the trailing stop locking a winner,
-              or the 20-day time limit recycling the cash. The “plain English” column is the same decision, without the jargon.
+              or the 20-day time limit recycling the cash. The "plain English" column is the same decision, without the jargon.
             </div>
-            <div className="table paper-ledger">
-              <div className="tr head">
-                <span>Day</span><span>Method</span><span>Symbol</span><span>Side</span><span>Qty</span><span>Price</span><span>Stop</span><span>P&amp;L</span><span>Why</span>
-              </div>
-              {(r.transactions ?? r.recentTrades).map((t, i) => (
-                <div key={`${t.day}-${t.strategy}-${t.symbol}-${i}`}>
-                  <div className="tr">
-                    <span className="mono muted">{t.day}</span>
-                    <span className="muted">{t.strategy}</span>
-                    <span className="mono">{t.symbol}</span>
-                    <span className={t.side === 'BUY' ? 'up' : 'down'}>{t.side}</span>
-                    <span className="mono">{t.qty}</span>
-                    <span className="mono">{inr(t.price, 2)}</span>
-                    <span className="mono muted">{t.stopLoss != null ? inr(t.stopLoss, 2) : '—'}</span>
-                    <span className={clsPnL(t.pnl)}>{t.side === 'SELL' ? `${inr(t.pnl)}${t.retPct != null ? ` (${t.retPct >= 0 ? '+' : ''}${t.retPct}%)` : ''}` : '—'}</span>
-                    <span className="muted" style={{ fontSize: 12 }}>{t.reason}</span>
-                  </div>
-                  {t.story && (
-                    <div className="paper-story">{t.story}</div>
-                  )}
-                </div>
-              ))}
-              {!(r.transactions ?? r.recentTrades).length && <div className="empty">No trades yet — first run opens positions from the seed window.</div>}
-            </div>
+            <SwingTradesTable trades={r.transactions ?? r.recentTrades} />
           </div>
         </div>
       )}
     </div>
   );
-}
-
-function clsPnL(n: number | null | undefined): string {
-  return n == null ? '' : n > 0.005 ? 'up' : n < -0.005 ? 'down' : 'muted';
 }

@@ -261,7 +261,7 @@ h3 { font-size: 15px; }
   display: flex;
   gap: 0;
   width: max-content;
-  animation: ticker-scroll 55s linear infinite;
+  animation: ticker-scroll 120s linear infinite;
 }
 
 .ticker:hover .ticker-track { animation-play-state: paused; }

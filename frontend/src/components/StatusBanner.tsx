@@ -21,8 +21,6 @@ export default function StatusBanner() {
       )}
       {mode === 'relay' && (
         <span>
-          Live NSE quotes via relay — prices stream in near-real-time during market hours.
-          Strategy signals &amp; reports come from the latest CI snapshot.
           {updated ? <em> Prices updated {timeAgo(updated)}</em> : null}
         </span>
       )}
