@@ -3,10 +3,10 @@ name: Backend Automation
 on:
   schedule:
     # Market-hours runs: during the NSE cash session (Mon–Fri).
-    # 09:16 IST (pre-open snapshot + intraday open), 10:00/12:00/14:00 IST
-    # (news refresh + paper stops + daily paper trade updates).
-    # Cheap: Google News RSS + Yahoo intraday bars + a small symbol cap.
-    - cron: '46 3,30 4,6,8 * * 1-5'
+    # 09:16 IST (pre-open snapshot + intraday open)
+    - cron: '46 3 * * 1-5'
+    # 10:00 / 12:00 / 14:00 IST (news refresh + paper stops + daily paper trade)
+    - cron: '30 4,6,8 * * 1-5'
     # 15:45 IST post-close snapshot — finalises the daily paper trade result.
     - cron: '15 10 * * 1-5'
     # Once-a-day deep run (03:00 IST): strategy window + report + fundamentals
@@ -73,7 +73,8 @@ jobs:
     steps:
       - name: Resolve run mode
         run: |
-          if [ "${{ github.event.schedule }}" = "46 3,30 4,6,8 * * 1-5" ] || \
+          if [ "${{ github.event.schedule }}" = "46 3 * * 1-5" ] || \
+             [ "${{ github.event.schedule }}" = "30 4,6,8 * * 1-5" ] || \
              [ "${{ github.event.schedule }}" = "15 10 * * 1-5" ]; then
             echo "MODE=news" >> "$GITHUB_ENV"
           else
