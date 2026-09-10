@@ -263,6 +263,7 @@ function replayDay(date: string, universe: Map<string, Bar[]>, liveBy: Map<strin
     qty: number,
     price: number,
     pnl: number,
+    retPct: number | null,
     exitClass: ExitClass | 'entry',
     reason: string,
     time: string,
@@ -275,7 +276,7 @@ function replayDay(date: string, universe: Map<string, Bar[]>, liveBy: Map<strin
       qty,
       price: Math.round(price * 100) / 100,
       pnl: Math.round(pnl * 100) / 100,
-      retPct: null, // filled below for SELL
+      retPct: retPct != null ? Math.round(retPct * 10) / 10 : null,
       exitClass,
       reason,
     });
@@ -302,7 +303,7 @@ function replayDay(date: string, universe: Map<string, Bar[]>, liveBy: Map<strin
     if (pnl >= 0) b.wins += 1;
     else b.losses += 1;
 
-    logTrade(strat, pos.symbol, 'SELL', pos.qty, exitPrice, pnl, exitClass, reason, time);
+    logTrade(strat, pos.symbol, 'SELL', pos.qty, exitPrice, pnl, retPct, exitClass, reason, time);
     positions.delete(strat);
   };
 
@@ -390,7 +391,7 @@ function replayDay(date: string, universe: Map<string, Bar[]>, liveBy: Map<strin
               highSince: price,
             });
 
-            logTrade(strat.id, best.symbol, 'BUY', qty, price, 0, 'entry', `Entry: ${best.why}`, timeOf(best.barTs));
+            logTrade(strat.id, best.symbol, 'BUY', qty, price, 0, null, 'entry', `Entry: ${best.why}`, timeOf(best.barTs));
           }
         }
       }
