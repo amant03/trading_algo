@@ -1266,20 +1266,29 @@ a.news-headline:hover { color: var(--cyan); }
 .ts-mark-n.amber { color: var(--amber); }
 
 /* ---------- supply-chain dependencies ---------- */
+.dep-page .dep-intro {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.55;
+  margin: 0 0 16px;
+  max-width: 78ch;
+}
+.dep-page .dep-intro b { color: var(--text); }
 .dep-panel .dep-split {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  gap: 16px;
+  align-items: start;
 }
-@media (max-width: 720px) {
+@media (max-width: 900px) {
   .dep-panel .dep-split { grid-template-columns: 1fr; }
 }
 .dep-note {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--muted);
-  line-height: 1.45;
-  padding: 8px 10px;
-  margin-bottom: 10px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  margin-bottom: 14px;
   border: 1px solid var(--line);
   border-left: 3px solid var(--cyan);
   background: var(--bg2);
@@ -1302,52 +1311,93 @@ a.news-headline:hover { color: var(--cyan); }
   text-transform: none;
   opacity: 0.7;
 }
-.dep-list { display: flex; flex-direction: column; gap: 6px; }
-.dep-row {
+.dep-lead {
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.45;
+  margin: 0 0 10px;
+}
+.dep-lead b { color: var(--text); }
+.dep-list { display: flex; flex-direction: column; gap: 10px; }
+.dep-card {
   display: flex;
-  gap: 10px;
+  flex-direction: column;
+  gap: 8px;
   width: 100%;
   text-align: left;
   background: var(--bg2);
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  padding: 8px 10px;
+  border-radius: var(--radius);
+  padding: 12px 14px 12px;
   color: var(--text);
   cursor: default;
 }
-.dep-row.go { cursor: pointer; }
-.dep-row.go:hover { border-color: var(--cyan); }
-.dep-rail {
-  width: 3px;
-  border-radius: 99px;
-  flex: none;
-  background: var(--line2);
+.dep-card.go { cursor: pointer; }
+.dep-card.go:hover { border-color: var(--cyan); }
+.dep-card.supplier { border-left: 3px solid var(--amber); }
+.dep-card.customer { border-left: 3px solid var(--up); }
+.dep-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
 }
-.dep-row.supplier .dep-rail { background: var(--amber); }
-.dep-row.customer .dep-rail { background: var(--up); }
-.dep-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
-.dep-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .dep-id {
   font-family: var(--font-mono);
   font-weight: 800;
-  font-size: 12.5px;
+  font-size: 14px;
   letter-spacing: 0.04em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.dep-share {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--cyan);
-  flex: none;
 }
 .dep-name {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
-  white-space: nowrap;
+  margin-top: 2px;
+}
+.dep-pct {
+  text-align: right;
+  flex: none;
+  max-width: 52%;
+}
+.dep-pct-n {
+  display: block;
+  font-family: var(--font-mono);
+  font-weight: 800;
+  font-size: 18px;
+  color: var(--cyan);
+  line-height: 1.1;
+}
+.dep-pct.unquantified .dep-pct-n { color: var(--dim); }
+.dep-pct.rpt-mix .dep-pct-n { color: var(--amber); }
+.dep-pct.filing .dep-pct-n { color: var(--up); }
+.dep-pct-k {
+  display: block;
+  font-size: 10.5px;
+  color: var(--dim);
+  line-height: 1.35;
+  margin-top: 3px;
+}
+.dep-mix {
+  height: 4px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.06);
   overflow: hidden;
-  text-overflow: ellipsis;
+}
+.dep-card.supplier .dep-mix > span { display: block; height: 100%; background: var(--amber); }
+.dep-card.customer .dep-mix > span { display: block; height: 100%; background: var(--up); }
+.dep-copy {
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.55;
+  margin: 0;
+}
+.dep-quote {
+  margin: 0;
+  font-size: 11.5px;
+  font-style: italic;
+  color: var(--dim);
+  line-height: 1.45;
+  border-left: 2px solid var(--line2);
+  padding-left: 10px;
 }
 .dep-origin {
   font-family: var(--font-mono);
@@ -1356,16 +1406,17 @@ a.news-headline:hover { color: var(--cyan); }
   letter-spacing: 0.04em;
 }
 .dep-empty {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--dim);
   padding: 8px 2px 4px;
+  line-height: 1.5;
 }
 .dep-foot {
-  margin-top: 10px;
-  padding-top: 8px;
+  margin-top: 16px;
+  padding-top: 10px;
   border-top: 1px solid rgba(148, 163, 184, 0.08);
-  font-size: 11px;
-  line-height: 1.5;
+  font-size: 12px;
+  line-height: 1.55;
   color: var(--dim);
 }
 .dep-foot a { color: var(--cyan); text-decoration: none; }

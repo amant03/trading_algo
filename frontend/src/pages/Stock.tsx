@@ -42,7 +42,7 @@ import type {
   PeerInfo,
 } from '../types';
 
-type Tab = 'overview' | 'fundamentals' | 'technical' | 'news' | 'ai';
+type Tab = 'overview' | 'fundamentals' | 'dependencies' | 'technical' | 'news' | 'ai';
 
 const RATING_COLOR: Record<string, string> = {
   'Strong Buy': 'var(--up)',
@@ -55,6 +55,7 @@ const RATING_COLOR: Record<string, string> = {
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'overview', label: 'Overview', icon: '◈' },
   { id: 'fundamentals', label: 'Fundamentals', icon: '◉' },
+  { id: 'dependencies', label: 'Dependencies', icon: '⇄' },
   { id: 'technical', label: 'Technical', icon: '〄' },
   { id: 'ai', label: 'AI Analyst', icon: '✦' },
   { id: 'news', label: 'News', icon: '✉' },
@@ -866,6 +867,14 @@ export default function Stock() {
         <AIAnalyst upper={upper} prompt={aiPrompt} onPromptConsumed={() => setAiPrompt(null)} />
       )}
 
+      {tab === 'dependencies' && (
+        <DependenciesPanel
+          symbol={upper}
+          name={analysis?.name ?? instrument?.name}
+          marketCap={analysis?.marketCap ?? instrument?.marketCap ?? null}
+        />
+      )}
+
       {tab === 'news' && (
         <div className="grid-2">
           <div className="panel">
@@ -894,9 +903,7 @@ export default function Stock() {
             )}
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <DependenciesPanel symbol={upper} marketCap={analysis?.marketCap ?? instrument?.marketCap ?? null} />
-            <div className="panel">
+          <div className="panel">
             <div className="panel-title"><h3>Signal history</h3><span className="hint">algorithm engine</span></div>
             <div style={{ maxHeight: 480, overflowY: 'auto' }}>
               <div className="feed">
@@ -916,7 +923,6 @@ export default function Stock() {
                 {!signals.length && <div className="empty">No signals yet for {upper}.</div>}
               </div>
             </div>
-          </div>
           </div>
         </div>
       )}
