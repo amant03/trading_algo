@@ -59,6 +59,31 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'news', label: 'News', icon: '✉' },
 ];
 
+const SIGNALS_URLS = [
+  'https://cdn.jsdelivr.net/gh/amant03/trading_algo@automation-data/frontend/public/signals.json',
+  'https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/signals.json',
+  'https://raw.githubusercontent.com/amant03/trading_algo/main/frontend/public/signals.json',
+];
+
+let signalsCache: Record<string, Signal[]> | null = null;
+
+async function loadSignalsFromJson(symbol: string): Promise<Signal[]> {
+  if (signalsCache) {
+    return signalsCache[symbol] ?? [];
+  }
+  for (const url of SIGNALS_URLS) {
+    try {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) continue;
+      const json = (await res.json()) as { data?: Record<string, Signal[]> };
+      signalsCache = json?.data ?? {};
+      return signalsCache[symbol] ?? [];
+    } catch { /* try next */ }
+  }
+  signalsCache = {};
+  return [];
+}
+
 function VerdictBar({ mid, low, high, price }: { mid: number; low: number; high: number; price: number }) {
   const lo = Math.min(low, high, mid, price) - 1;
   const hi = Math.max(low, high, mid, price) + 1;
@@ -464,8 +489,18 @@ export default function Stock() {
     });
 
     get<Signal[]>(`/api/instruments/${upper}/signals?limit=30`)
-      .then(setSignals)
-      .catch(() => {});
+      .then((apiSignals) => {
+        if (apiSignals.length) {
+          setSignals(apiSignals);
+        } else {
+          // API returned empty — try signals.json from automation-data
+          loadSignalsFromJson(upper).then(setSignals).catch(() => {});
+        }
+      })
+      .catch(() => {
+        // API 404 (stock not in DB) — try signals.json
+        loadSignalsFromJson(upper).then(setSignals).catch(() => {});
+      });
     get<NewsItem[]>(`/api/instruments/${upper}/news?limit=12`)
       .then(setStockNews)
       .catch(() => {});

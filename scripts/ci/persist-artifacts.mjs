@@ -99,7 +99,7 @@ async function main() {
   await unionAnalysis();
   await unionNews();
   // sanity: refresh any gating artifact that was only present upstream
-  for (const rel of ['snapshot.json', 'paper/latest.json', 'paper/state.json', 'paper/daily.json']) {
+  for (const rel of ['snapshot.json', 'paper/latest.json', 'paper/state.json', 'paper/daily.json', 'signals.json']) {
     if (!existsSync(join(PUBLIC, rel))) {
       const remote = await fetchRemote(rel);
       if (remote) {

@@ -192,6 +192,12 @@ jobs:
         env:
           NEWS_MAX_SYMBOLS: '150'
 
+      # Signal history: runs all 8 strategies on daily bars for every covered
+      # stock and writes frontend/public/signals.json. No DB dependency —
+      # uses Yahoo Finance directly so even non-DB stocks get signal history.
+      - name: Generate signal history for all covered stocks
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/signals.ts
+
       # Carry the paper-trading account forward — the ephemeral CI Postgres
       # forgets everything between runs, so the ₹1,00,000 account, positions and
       # P&L live on the automation-data branch instead.
