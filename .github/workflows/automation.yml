@@ -25,7 +25,7 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
 
     services:
       postgres:
@@ -201,6 +201,25 @@ jobs:
         if: env.MODE == 'full'
         run: node node_modules/tsx/dist/cli.mjs scripts/ci/signals.ts
 
+      # Supply-chain dependencies: disclosed supplier/customer extraction
+      # from annual reports, rating rationales and concalls, plus a reverse
+      # graph (if A names B as a customer, B gains A as a supplier). Oldest
+      # unchecked names first so the whole >₹5,000 cr set rotates weekly.
+      # A dedicated Sunday job (.github/workflows/dependencies.yml) runs a
+      # larger batch; this daily step keeps coverage moving in between.
+      - name: Pre-stage previous dependencies
+        if: env.MODE == 'full'
+        run: |
+          curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/dependencies.json \
+            -o frontend/public/dependencies.json || echo "no previous dependencies — first run"
+
+      - name: Generate supply-chain dependencies
+        if: env.MODE == 'full'
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/dependencies.ts
+        env:
+          DEPS_PER_RUN: '40'
+          DEPS_STALE_DAYS: '7'
+
       # Carry the paper-trading account forward — the ephemeral CI Postgres
       # forgets everything between runs, so the ₹1,00,000 account, positions and
       # P&L live on the automation-data branch instead.
@@ -282,6 +301,7 @@ jobs:
           git add frontend/public/analysis.json 2>/dev/null || true
           git add frontend/public/news.json 2>/dev/null || true
           git add frontend/public/signals.json 2>/dev/null || true
+          git add frontend/public/dependencies.json 2>/dev/null || true
           git add frontend/public/paper/ 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "Nothing new to commit"

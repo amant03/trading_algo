@@ -1,0 +1,68 @@
+name: Supply-chain dependencies
+
+# Dedicated weekly pass. Supplier/customer maps do not change overnight, so
+# this job is the source of truth for frontend/public/dependencies.json.
+# Daily automation still runs a smaller batch so coverage never stalls.
+# Commits onto the automation-data branch only — never force-resets it.
+
+on:
+  schedule:
+    # Sunday 07:30 IST — five hours after the daily 03:00 IST full run
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+
+concurrency:
+  group: backend-automation
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  dependencies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Pre-stage analysis + dependencies
+        run: |
+          curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/analysis.json \
+            -o frontend/public/analysis.json || echo "no analysis yet — engine will no-op"
+          curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/dependencies.json \
+            -o frontend/public/dependencies.json || echo "no previous dependencies — first run"
+
+      - name: Generate supply-chain dependencies
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/dependencies.ts
+        env:
+          DEPS_PER_RUN: '80'
+          DEPS_STALE_DAYS: '7'
+
+      - name: Commit dependencies.json onto automation-data
+        run: |
+          git config user.name "automation-bot"
+          git config user.email "actions@github.com"
+          if [ ! -f frontend/public/dependencies.json ]; then
+            echo "no dependencies.json produced"
+            exit 0
+          fi
+          cp frontend/public/dependencies.json /tmp/dependencies.json
+          git fetch origin automation-data
+          git checkout -B automation-data origin/automation-data
+          mkdir -p frontend/public
+          cp /tmp/dependencies.json frontend/public/dependencies.json
+          git add frontend/public/dependencies.json
+          if git diff --cached --quiet; then
+            echo "Nothing new to commit"
+            exit 0
+          fi
+          git commit -m "chore(automation): weekly supply-chain dependencies #$GITHUB_RUN_NUMBER"
+          git push origin HEAD:automation-data

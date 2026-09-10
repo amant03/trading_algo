@@ -12,6 +12,7 @@ import ReportsPanel from '../components/ReportsPanel';
 import ScreenerPanel from '../components/ScreenerPanel';
 import KeyRatios from '../components/KeyRatios';
 import AIAnalyst from '../components/AIAnalyst';
+import DependenciesPanel from '../components/DependenciesPanel';
 import {
   sma,
   ema,
@@ -893,7 +894,9 @@ export default function Stock() {
             )}
           </div>
 
-          <div className="panel">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <DependenciesPanel symbol={upper} marketCap={analysis?.marketCap ?? instrument?.marketCap ?? null} />
+            <div className="panel">
             <div className="panel-title"><h3>Signal history</h3><span className="hint">algorithm engine</span></div>
             <div style={{ maxHeight: 480, overflowY: 'auto' }}>
               <div className="feed">
@@ -913,6 +916,7 @@ export default function Stock() {
                 {!signals.length && <div className="empty">No signals yet for {upper}.</div>}
               </div>
             </div>
+          </div>
           </div>
         </div>
       )}

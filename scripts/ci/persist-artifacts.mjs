@@ -9,6 +9,9 @@
 //   * news.json — every symbol's item list is merged (ours wins per title).
 //   * signals.json — remote symbols we don't have are carried in (a run with
 //     partial Yahoo failures never drops a symbol a previous run had).
+//   * dependencies.json — remote per-symbol entries we don't have (or that are
+//     fresher upstream) are carried in; the engine is incremental so a run
+//     must never drop another run's freshly checked symbols.
 //   * snapshot.json / paper/* / reports/* — local (generated this run) wins.
 //
 // Reads the branch via raw.githubusercontent.com (public repo, no auth). No deps.
@@ -126,12 +129,49 @@ async function unionSignals() {
   console.log(`merge-artifacts: signals union +${addedSyms} remote symbols (+${addedSigs} signals) -> ${local.symbols} total`);
 }
 
+async function unionDependencies() {
+  const local = readJson('dependencies.json');
+  const remoteRaw = await fetchRemote('dependencies.json');
+  if (!local) return;
+  if (!remoteRaw) return;
+  let remote;
+  try {
+    remote = JSON.parse(remoteRaw);
+  } catch {
+    return;
+  }
+  if (!remote?.data) return;
+  const data = local.data ?? {};
+  let added = 0;
+  for (const [sym, entry] of Object.entries(remote.data)) {
+    const mine = data[sym];
+    if (!mine) {
+      data[sym] = entry;
+      added += 1;
+    } else if ((entry?.checkedAt ?? '') > (mine?.checkedAt ?? '') && (entry?.suppliers?.length || entry?.customers?.length)) {
+      // upstream checked this symbol more recently — take the fresher entry
+      data[sym] = entry;
+      added += 1;
+    }
+  }
+  local.data = data;
+  local.coverage = Object.values(data).filter((d) => (d?.suppliers?.length || 0) + (d?.customers?.length || 0) > 0).length;
+  if (remote.engineVersion && (!local.engineVersion || remote.engineVersion > local.engineVersion)) {
+    local.engineVersion = remote.engineVersion;
+  } else if (!local.engineVersion) {
+    local.engineVersion = 4;
+  }
+  writeFileSync(join(PUBLIC, 'dependencies.json'), JSON.stringify(local));
+  console.log(`merge-artifacts: dependencies union +${added} remote entries -> ${local.coverage} covered`);
+}
+
 async function main() {
   await unionAnalysis();
   await unionNews();
   await unionSignals();
+  await unionDependencies();
   // sanity: refresh any gating artifact that was only present upstream
-  for (const rel of ['snapshot.json', 'paper/latest.json', 'paper/state.json', 'paper/daily.json', 'signals.json']) {
+  for (const rel of ['snapshot.json', 'paper/latest.json', 'paper/state.json', 'paper/daily.json', 'signals.json', 'dependencies.json']) {
     if (!existsSync(join(PUBLIC, rel))) {
       const remote = await fetchRemote(rel);
       if (remote) {

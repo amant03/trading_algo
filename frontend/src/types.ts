@@ -458,6 +458,40 @@ export interface StockAnalysis {
 export type SparklinePoint = [number, number]; // [ts, close]
 export type Sparkline = SparklinePoint[];
 
+// ---- Supply-chain dependencies (scripts/ci/dependencies.ts -> dependencies.json) ----
+
+export type DepBasis = 'disclosed-report' | 'disclosed-rpt' | 'disclosed-fact' | 'inferred-reverse';
+
+export interface DepRow {
+  name: string;
+  symbol: string | null;
+  side: 'supplier' | 'customer';
+  evidence: string;
+  source: string;
+  basis: DepBasis;
+  amount?: number | null;
+  share?: number | null;
+  via?: { symbol: string; name: string } | null;
+}
+
+export interface DepEntry {
+  suppliers: DepRow[];
+  customers: DepRow[];
+  sources: { label: string; url: string }[];
+  checkedAt: string;
+  note?: string | null;
+  engineVersion?: number;
+}
+
+export interface DepFile {
+  generatedAt: string;
+  thresholdCr: number;
+  universe: number;
+  coverage: number;
+  engineVersion?: number;
+  data: Record<string, DepEntry>;
+}
+
 // ---- Google-News-driven per-stock news (scripts/ci/news.ts -> news.json) ----
 
 export interface NewsArticle {
