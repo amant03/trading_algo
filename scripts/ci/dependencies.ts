@@ -39,7 +39,7 @@
 //   DEPS_ONLY         comma-separated symbols (targeted runs)
 //   DEPS_STALE_DAYS   refresh after this many days (default 7)
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, rmSync } from 'fs';
 import { join } from 'path';
 import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 
@@ -147,16 +147,16 @@ async function fetchPdfText(url: string): Promise<{ text: string; pages: number 
 }
 
 async function tryOnce<T>(fn: () => Promise<T>): Promise<T | null> {
-  try {
-    return await fn();
-  } catch {
+  const delays = [0, 2000, 5000];
+  for (const d of delays) {
+    if (d) await new Promise((r) => setTimeout(r, d));
     try {
-      await new Promise((r) => setTimeout(r, 1500));
       return await fn();
     } catch {
-      return null;
+      /* retry */
     }
   }
+  return null;
 }
 
 function parseShare(text: string): number | null {
@@ -1218,6 +1218,18 @@ function saveStore(data: Record<string, DepEntry>, coveredLen: number): void {
 }
 
 async function main(): Promise<void> {
+  const LOCK_FILE = `${OUT_FILE}.lock`;
+  try {
+    if (existsSync(LOCK_FILE)) {
+      const age = Date.now() - statSync(LOCK_FILE).mtimeMs;
+      if (age < 30 * 60_000) {
+        console.log('deps: another run holds the lock — skipping');
+        return;
+      }
+    }
+    writeFileSync(LOCK_FILE, String(process.pid));
+  } catch { /* disable lock if fs unavailable */ }
+
   const analysis = JSON.parse(readFileSync(ANALYSIS_FILE, 'utf8')) as {
     stocks: Record<string, { symbol: string; name: string | null; marketCap: number | null }>;
   };
@@ -1320,6 +1332,7 @@ async function main(): Promise<void> {
   const coverage = Object.values(data).filter((d) => d.suppliers.length + d.customers.length > 0).length;
   const listed = Object.values(data).filter((d) => listedCount(d) > 0).length;
   console.log(`deps: done · ${todo.length} fetched · ${withRows} with rows this run · coverage ${coverage}/${covered.length} · listed-links ${listed}`);
+  try { rmSync(LOCK_FILE, { force: true }); } catch { /* ignore */ }
 }
 
 main().catch((e) => {
