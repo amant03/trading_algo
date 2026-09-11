@@ -184,6 +184,19 @@ jobs:
         if: env.MODE == 'full'
         run: node node_modules/tsx/dist/cli.mjs scripts/ci/management.ts
 
+      # Heal carried entries: recompute derived fields (peg, growth, screens,
+      # verdicts) with current code so coverage-batch stocks never go stale.
+      # No DB, no network — pure recompute, idempotent.
+      - name: Heal carried analysis entries
+        if: env.MODE == 'full'
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/heal-analysis.ts
+
+      # Ratio sanity for every covered stock: fails the run on inconsistent
+      # or absurd stored ratios (peg vs pe/growth, no-price, missing screens).
+      - name: Validate fundamentals
+        if: env.MODE == 'full'
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/validate-fundamentals.ts
+
       # Per-stock news for the whole covered set (Google News RSS), merged with
       # the previous 7-day window into frontend/public/news.json.
       - name: Refresh per-stock news (deep run)

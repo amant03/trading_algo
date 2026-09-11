@@ -1160,13 +1160,6 @@ function preferFilled(current: number | null, next: number | null): number | nul
   return current;
 }
 
-function growthForPeg(m: Metrics, v: ScreenerView): number | null {
-  const fromMetrics = m.earningsGrowth ?? m.growth ?? m.revenueGrowth;
-  if (fromMetrics != null && fromMetrics > 0) return fromMetrics;
-  const profit = v.ranges.find((r) => /profit growth/i.test(r.label));
-  return profit?.y1 ?? profit?.y3 ?? profit?.y5 ?? v.derived?.earningsGrowth ?? null;
-}
-
 /** Fill legacy Metrics with Screener values. Top-strip (current TTM) wins over reconstructed annuals. */
 export function applyScreener(m: Metrics, sf: ScreenerFundamentals | null): void {
   if (!sf) return;
@@ -1226,8 +1219,17 @@ export function applyScreener(m: Metrics, sf: ScreenerFundamentals | null): void
   }
 
   m.growth = m.earningsGrowth ?? m.growth ?? m.revenueGrowth;
-  const computed = pegFromPeAndGrowth(m.pe, growthForPeg(m, v));
-  m.peg = computed ?? m.peg ?? fino?.peg ?? null;
+  // PEG must agree with the DISPLAYED pe and growth: recompute whenever both
+  // are positive (overrides stale/Screener pegs that used other inputs).
+  // When growth is missing, a Screener/Finology peg is better than nothing.
+  const strict = pegFromPeAndGrowth(m.pe, m.growth);
+  m.peg = strict ?? m.peg ?? fino?.peg ?? null;
+  // Bank P&L has no meaningful operating/gross margin (interest is both raw
+  // material and product) — Yahoo's versions are artifacts like -887%.
+  if (sf.sectorKind === 'bank') {
+    m.operatingMargin = null;
+    m.grossMargin = null;
+  }
 }
 
 // ---- Screens -------------------------------------------------------------
@@ -1488,8 +1490,16 @@ export function buildEntry(opts: {
   financials?: ScreenerFundamentals | null;
 }): AnalysisEntry {
   const { symbol, name, m, price } = opts;
+  // Yahoo uses exactly 0 as a "P/E unavailable" sentinel (e.g. IDEA) — a
+  // P/E of zero is never meaningful, so normalize it to null. Genuine
+  // negative P/Es (loss-makers) are kept.
+  if (m.pe === 0) m.pe = null;
   m.growth = m.earningsGrowth ?? m.revenueGrowth ?? m.growth;
-  if (m.peg == null) m.peg = pegFromPeAndGrowth(m.pe, m.growth);
+  // Final funnel: displayed peg must equal displayed pe/growth whenever both
+  // are positive (heals stale pegs carried from older runs). Otherwise keep
+  // any Screener-sourced peg.
+  const strict = pegFromPeAndGrowth(m.pe, m.growth);
+  m.peg = strict ?? m.peg ?? null;
   const verdict = computeVerdict(m, price, symbol, name);
   const screens = {
     buffett: buffettScreen(m),
