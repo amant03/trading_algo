@@ -199,6 +199,67 @@ function DepColumn({
   );
 }
 
+function DepSummary({ entry }: { entry: DepEntry }) {
+  const rows = [
+    ...entry.suppliers.map((r) => ({ r, side: 'supplier' as const })),
+    ...entry.customers.map((r) => ({ r, side: 'customer' as const })),
+  ];
+  const mcapAxes = [
+    ...entry.costSplit?.map((c) => `${c.label}: ${c.pct}%`) ?? [],
+    ...entry.revenueGeo?.map((g) => `${g.label}: ${g.pct}%`) ?? [],
+  ];
+  return (
+    <div className="dep-block">
+      {entry.about?.text && (
+        <section className="dep-summary-sec">
+          <div className="dep-sec-h"><span>What the business is</span></div>
+          <p className="dep-about">{entry.about.text}</p>
+          {entry.about.highlights.length > 0 && (
+            <ul className="dep-hl">
+              {entry.about.highlights.map((h, i) => (
+                <li key={i}>{h}</li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+      {(entry.costSplit || entry.revenueGeo) && mcapAxes.length > 0 && (
+        <section className="dep-summary-sec">
+          <div className="dep-sec-h"><span>Where the money goes & comes from</span></div>
+          <ul className="dep-geo">
+            {mcapAxes.map((m, i) => (
+              <li key={i}>{m}</li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {entry.factors && entry.factors.length > 0 && (
+        <section className="dep-summary-sec">
+          <div className="dep-sec-h"><span>What can move the stock</span></div>
+          <ul className="dep-factors">
+            {entry.factors.map((f, i) => (
+              <li key={i} className="dep-factor">
+                <span className="dep-factor-label">{f.label}</span>
+                {f.evidence && <span className="dep-factor-ev">“{f.evidence.trim()}”</span>}
+                {f.source && <span className="dep-factor-src">— {f.source}</span>}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {rows.length > 0 && (
+        <section className="dep-summary-sec">
+          <div className="dep-sec-h"><span>Counterparty map</span></div>
+          <p className="dep-about">
+            {rows.length} named counterpart{rows.length === 1 ? 'y' : 'ies'}:{' '}
+            {rows.map(({ r }) => r.symbol ?? r.name).join(', ')}.
+          </p>
+        </section>
+      )}
+    </div>
+  );
+}
+
 export default function DependenciesPanel({
   symbol,
   name,
@@ -260,6 +321,7 @@ export default function DependenciesPanel({
         </div>
       ) : hasRows || entry?.note ? (
         <>
+          {entry?.about && <DepSummary entry={entry} />}
           {entry?.note && <div className="dep-note">{entry.note}</div>}
           <div className="dep-split">
             <DepColumn

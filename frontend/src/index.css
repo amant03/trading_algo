@@ -1422,6 +1422,74 @@ a.news-headline:hover { color: var(--cyan); }
 .dep-foot a { color: var(--cyan); text-decoration: none; }
 .dep-foot a:hover { text-decoration: underline; }
 
+/* ---- dependency v2 summary blocks ---- */
+.dep-block {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 18px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+.dep-summary-sec .dep-sec-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  margin-bottom: 8px;
+}
+.dep-about {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text);
+  margin: 0;
+}
+.dep-hl, .dep-geo, .dep-factors {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dep-hl li, .dep-geo li {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--muted);
+  padding-left: 14px;
+  position: relative;
+}
+.dep-hl li::before, .dep-geo li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  background: var(--cyan);
+  opacity: 0.7;
+}
+.dep-factor { display: flex; flex-direction: column; gap: 2px; }
+.dep-factor-label {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text);
+}
+.dep-factor-ev {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.dep-factor-src {
+  font-size: 11px;
+  color: var(--dim);
+}
+
 /* ---- auth + footer (Phase 1) ---- */
 .account-menu {
   display: inline-flex;

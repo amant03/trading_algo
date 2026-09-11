@@ -497,6 +497,10 @@ export interface DepEntry {
   checkedAt: string;
   note?: string | null;
   engineVersion?: number;
+  about?: { text: string; highlights: string[] } | null;
+  costSplit?: { label: string; pct: number }[] | null;
+  revenueGeo?: { label: string; pct: number }[] | null;
+  factors?: { label: string; evidence: string; source: string }[] | null;
 }
 
 export interface DepFile {
