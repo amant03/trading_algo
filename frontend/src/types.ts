@@ -217,6 +217,22 @@ export interface Trade {
   ts: number;
 }
 
+export interface AuthUser {
+  id: number;
+  email: string;
+  displayName: string;
+  authProvider: 'email' | 'google';
+  hasOnboarded: boolean;
+  createdAt: number;
+  lastLoginAt: number | null;
+}
+
+export interface AuthResponse {
+  token: string;
+  user: AuthUser;
+  accountId: number;
+}
+
 export interface WsMessage<T = unknown> {
   type: string;
   payload: T;

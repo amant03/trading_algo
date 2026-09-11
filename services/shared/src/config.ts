@@ -24,6 +24,13 @@ export const config = {
     port: Number(process.env.API_PORT ?? 8080),
   },
 
+  auth: {
+    // HS256 signing secret for session JWTs. Override JWT_SECRET in any
+    // shared/deployed environment — the default is development-only.
+    jwtSecret: process.env.JWT_SECRET ?? 'dev-only-insecure-secret-change-me',
+    tokenTtlSec: Number(process.env.JWT_TTL_SEC ?? 7 * 24 * 3600),
+  },
+
   sim: {
     speed: Number(process.env.SIM_SPEED ?? 6),
     candleIntervalSec: Number(process.env.CANDLE_INTERVAL_SEC ?? 3),

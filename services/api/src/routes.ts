@@ -16,6 +16,7 @@ import {
   Timeframe,
 } from '@trading/shared';
 import { MarketStore } from './market-store.js';
+import { ensureAccount, requireAuth } from './auth.js';
 
 export interface Ctx {
   store: MarketStore;
@@ -305,17 +306,21 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
     },
   );
 
-  // ---------------- portfolio ----------------
-  app.get('/api/portfolio', async () => {
+  // ---------------- portfolio (per-user; auth required) ----------------
+  app.get('/api/portfolio', { preHandler: requireAuth }, async (req) => {
+    const accountId = await ensureAccount(req.user!.id);
     const acc = (await query(
-      'SELECT id, cash_balance, initial_capital, equity FROM accounts WHERE id = 1',
+      'SELECT id, cash_balance, initial_capital, equity FROM accounts WHERE id = $1',
+      [accountId],
     )).rows[0];
     const positions = (await query(
       `SELECT p.instrument_id, p.quantity, p.avg_price, p.realized_pnl
-       FROM positions p WHERE p.account_id = 1 ORDER BY p.instrument_id`,
+       FROM positions p WHERE p.account_id = $1 ORDER BY p.instrument_id`,
+      [accountId],
     )).rows;
     const equityRows = (await query(
-      `SELECT ts, equity FROM equity_curve WHERE account_id = 1 ORDER BY ts DESC LIMIT 500`,
+      `SELECT ts, equity FROM equity_curve WHERE account_id = $1 ORDER BY ts DESC LIMIT 500`,
+      [accountId],
     )).rows.reverse();
 
     let invested = 0;
@@ -370,14 +375,15 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
     };
   });
 
-  app.get<{ Querystring: { limit?: string } }>('/api/orders', async (req) => {
+  app.get<{ Querystring: { limit?: string } }>('/api/orders', { preHandler: requireAuth }, async (req) => {
     const limit = Math.min(Number(req.query.limit ?? 50), 200);
     const res = await query(
       `SELECT o.id, o.account_id, o.instrument_id, o.side, o.order_type, o.quantity, o.limit_price,
               o.status, o.filled_qty, o.avg_price, o.strategy, o.created_at, o.updated_at, i.symbol
        FROM orders o JOIN instruments i ON i.id = o.instrument_id
-       ORDER BY o.created_at DESC LIMIT $1`,
-      [limit],
+       WHERE o.user_id = $1
+       ORDER BY o.created_at DESC LIMIT $2`,
+      [req.user!.id, limit],
     );
     return res.rows.map((r) => ({
       id: Number(r.id), accountId: Number(r.account_id), instrumentId: Number(r.instrument_id),
@@ -389,13 +395,14 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
     }));
   });
 
-  app.get<{ Querystring: { limit?: string } }>('/api/trades', async (req) => {
+  app.get<{ Querystring: { limit?: string } }>('/api/trades', { preHandler: requireAuth }, async (req) => {
     const limit = Math.min(Number(req.query.limit ?? 50), 200);
     const res = await query(
       `SELECT t.id, t.order_id, t.instrument_id, t.side, t.quantity, t.price, t.realized_pnl, t.strategy, t.ts, i.symbol
        FROM trades t JOIN instruments i ON i.id = t.instrument_id
-       ORDER BY t.ts DESC LIMIT $1`,
-      [limit],
+       WHERE t.user_id = $1
+       ORDER BY t.ts DESC LIMIT $2`,
+      [req.user!.id, limit],
     );
     return res.rows.map((r) => ({
       id: Number(r.id), orderId: r.order_id == null ? null : Number(r.order_id),
@@ -405,9 +412,10 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
     }));
   });
 
-  // ---------------- trading ----------------
+  // ---------------- trading (per-user; auth required) ----------------
   app.post<{ Body: { symbol: string; side: string; orderType?: string; quantity: number; limitPrice?: number } }>(
     '/api/orders',
+    { preHandler: requireAuth },
     async (req, reply) => {
       const { symbol, side, orderType = 'MARKET', quantity, limitPrice } = req.body ?? {};
       const inst = bySymbol.get((symbol ?? '').toUpperCase());
@@ -420,13 +428,14 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
         return reply.code(400).send({ error: 'limitPrice required for LIMIT orders' });
       }
 
+      const accountId = await ensureAccount(req.user!.id);
       const res = await query<{ id: number }>(
-        `INSERT INTO orders (account_id, instrument_id, side, order_type, quantity, limit_price, status, strategy)
-         VALUES (1, $1, $2, $3, $4, $5, 'PENDING', NULL) RETURNING id`,
-        [inst.id, side, orderType, qty, orderType === 'LIMIT' ? Number(limitPrice) : null],
+        `INSERT INTO orders (account_id, user_id, instrument_id, side, order_type, quantity, limit_price, status, strategy)
+         VALUES ($1, $2, $3, $4, $5, $6, 'PENDING', NULL) RETURNING id`,
+        [accountId, req.user!.id, inst.id, side, orderType, qty, orderType === 'LIMIT' ? Number(limitPrice) : null],
       );
       const order: Order = {
-        id: res.rows[0].id, accountId: 1, instrumentId: inst.id, symbol: inst.symbol,
+        id: res.rows[0].id, accountId, userId: req.user!.id, instrumentId: inst.id, symbol: inst.symbol,
         side: side as Order['side'], orderType: orderType as Order['orderType'],
         quantity: qty, limitPrice: orderType === 'LIMIT' ? Number(limitPrice) : null,
         status: 'PENDING', filledQty: 0, avgPrice: null, strategy: null,
@@ -463,38 +472,40 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
     },
   );
 
-  // ---------------- watchlist ----------------
-  app.get('/api/watchlist', async () => {
-    const res = await query('SELECT instrument_ids FROM watchlists WHERE id = 1');
-    const ids = res.rows[0]?.instrument_ids ?? [];
+  // ---------------- watchlist (per-user rows; anonymous reads get [] and
+  // fall back to the frontend's local list, which is the source of truth
+  // on the static deploy) ----------------
+  app.get('/api/watchlist', async (req) => {
+    if (!req.user) return [];
+    const res = await query<{ symbol: string }>(
+      'SELECT symbol FROM watchlists WHERE user_id = $1 AND symbol IS NOT NULL ORDER BY created_at',
+      [req.user.id],
+    );
+    const syms = new Set(res.rows.map((r) => r.symbol.toUpperCase()));
     return instruments
-      .filter((i) => ids.includes(i.id))
+      .filter((i) => syms.has(i.symbol))
       .map((inst) => {
         const snap = store.getSnapshot(inst.id);
         return { ...inst, price: snap?.price ?? inst.basePrice, changePct: snap?.changePct ?? 0 };
       });
   });
 
-  app.post<{ Params: { symbol: string } }>('/api/watchlist/:symbol', async (req, reply) => {
+  app.post<{ Params: { symbol: string } }>('/api/watchlist/:symbol', { preHandler: requireAuth }, async (req, reply) => {
     const inst = bySymbol.get(req.params.symbol.toUpperCase());
     if (!inst) return reply.code(404).send({ error: 'instrument not found' });
     await query(
-      `INSERT INTO watchlists (id, name, instrument_ids) VALUES (1, 'Default', ARRAY[$1])
-       ON CONFLICT (id) DO UPDATE SET instrument_ids =
-         CASE WHEN $1 = ANY(watchlists.instrument_ids) THEN watchlists.instrument_ids
-              ELSE watchlists.instrument_ids || $1 END`,
-      [inst.id],
+      `INSERT INTO watchlists (user_id, symbol, name, instrument_ids)
+       VALUES ($1, $2, 'Default', '{}')
+       ON CONFLICT (user_id, symbol) DO NOTHING`,
+      [req.user!.id, inst.symbol],
     );
     return { ok: true, symbol: inst.symbol };
   });
 
-  app.delete<{ Params: { symbol: string } }>('/api/watchlist/:symbol', async (req, reply) => {
+  app.delete<{ Params: { symbol: string } }>('/api/watchlist/:symbol', { preHandler: requireAuth }, async (req, reply) => {
     const inst = bySymbol.get(req.params.symbol.toUpperCase());
     if (!inst) return reply.code(404).send({ error: 'instrument not found' });
-    await query(
-      `UPDATE watchlists SET instrument_ids = array_remove(instrument_ids, $1) WHERE id = 1`,
-      [inst.id],
-    );
+    await query('DELETE FROM watchlists WHERE user_id = $1 AND symbol = $2', [req.user!.id, inst.symbol]);
     return { ok: true, symbol: inst.symbol };
   });
 }

@@ -134,6 +134,7 @@ export interface NewsEvent {
 export interface Order {
   id: number;
   accountId: number;
+  userId: number | null;
   instrumentId: number;
   symbol: string;
   side: Side;
@@ -152,6 +153,7 @@ export interface Trade {
   id: number;
   orderId: number | null;
   accountId: number;
+  userId: number | null;
   instrumentId: number;
   symbol: string;
   side: Side;
@@ -201,6 +203,18 @@ export interface AlgorithmConfig {
 export interface EquityPoint {
   ts: number;
   equity: number;
+}
+
+export type AuthProvider = 'email' | 'google';
+
+export interface User {
+  id: number;
+  email: string;
+  displayName: string;
+  authProvider: AuthProvider;
+  hasOnboarded: boolean;
+  createdAt: number;
+  lastLoginAt: number | null;
 }
 
 export interface IndicatorResult {

@@ -1421,3 +1421,60 @@ a.news-headline:hover { color: var(--cyan); }
 }
 .dep-foot a { color: var(--cyan); text-decoration: none; }
 .dep-foot a:hover { text-decoration: underline; }
+
+/* ---- auth + footer (Phase 1) ---- */
+.account-menu {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+.account-name {
+  font-weight: 700;
+  color: var(--text);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.account-link {
+  color: var(--muted);
+  text-decoration: none;
+  font-weight: 600;
+}
+.account-link:hover { color: var(--text); }
+.account-link.signup {
+  color: var(--cyan);
+  border: 1px solid rgba(63, 208, 234, 0.35);
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+}
+.account-link.signup:hover { background: rgba(63, 208, 234, 0.08); }
+.account-logout {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+.account-logout:hover { color: var(--down); }
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 20px 18px;
+  font-size: 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.1);
+}
+.footer a { color: var(--cyan); text-decoration: none; white-space: nowrap; }
+.footer a:hover { text-decoration: underline; }
+label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 6px;
+}

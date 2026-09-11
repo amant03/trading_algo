@@ -4,6 +4,24 @@
 -- ============================================================
 
 -- ------------------------------------------------------------------
+-- USERS : per-user accounts (Epic 1.1 — auth & persistent portfolios).
+-- password_hash is NULL for OAuth-only accounts. Existing deployments
+-- gain this table (plus user_id columns below) via
+-- scripts/db/migrations/001_auth_accounts.sql — never by editing history.
+-- ------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS users (
+    id             SERIAL PRIMARY KEY,
+    email          VARCHAR(255) NOT NULL,
+    password_hash  TEXT,
+    display_name   VARCHAR(80)  NOT NULL,
+    auth_provider  VARCHAR(10)  NOT NULL DEFAULT 'email', -- email | google
+    has_onboarded  BOOLEAN      NOT NULL DEFAULT FALSE,
+    created_at     TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    last_login_at  TIMESTAMPTZ,
+    UNIQUE (email)
+);
+
+-- ------------------------------------------------------------------
 -- INSTRUMENTS : every tradeable symbol (EQ, FUT, crypto, FX, ...)
 -- ------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS instruments (
@@ -128,11 +146,13 @@ CREATE INDEX IF NOT EXISTS idx_signals_ts ON signals (ts DESC);
 -- ------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS accounts (
     id              SERIAL PRIMARY KEY,
+    user_id         INT NULL REFERENCES users(id) ON DELETE CASCADE, -- NULL = legacy global account
     name            VARCHAR(60) NOT NULL,
     cash_balance    NUMERIC(16,2) NOT NULL DEFAULT 1000000,
     initial_capital NUMERIC(16,2) NOT NULL DEFAULT 1000000,
     equity          NUMERIC(16,2) NOT NULL DEFAULT 1000000,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (user_id)
 );
 
 -- ------------------------------------------------------------------
@@ -141,6 +161,7 @@ CREATE TABLE IF NOT EXISTS accounts (
 CREATE TABLE IF NOT EXISTS orders (
     id            BIGSERIAL PRIMARY KEY,
     account_id    INT NOT NULL DEFAULT 1 REFERENCES accounts(id),
+    user_id       INT NULL REFERENCES users(id) ON DELETE CASCADE, -- owner; NULL = legacy pre-auth row
     instrument_id INT NOT NULL REFERENCES instruments(id) ON DELETE CASCADE,
     side          VARCHAR(4) NOT NULL,          -- BUY | SELL
     order_type    VARCHAR(8) NOT NULL DEFAULT 'MARKET', -- MARKET | LIMIT
@@ -162,6 +183,7 @@ CREATE TABLE IF NOT EXISTS trades (
     id            BIGSERIAL PRIMARY KEY,
     order_id      BIGINT REFERENCES orders(id) ON DELETE SET NULL,
     account_id    INT NOT NULL DEFAULT 1 REFERENCES accounts(id),
+    user_id       INT NULL REFERENCES users(id) ON DELETE CASCADE, -- owner; NULL = legacy pre-auth row
     instrument_id INT NOT NULL REFERENCES instruments(id) ON DELETE CASCADE,
     side          VARCHAR(4) NOT NULL,
     quantity      INT NOT NULL,
@@ -178,6 +200,7 @@ CREATE INDEX IF NOT EXISTS idx_trades_ts ON trades (ts DESC);
 CREATE TABLE IF NOT EXISTS positions (
     id            SERIAL PRIMARY KEY,
     account_id    INT NOT NULL DEFAULT 1 REFERENCES accounts(id),
+    user_id       INT NULL REFERENCES users(id) ON DELETE CASCADE, -- owner; NULL = legacy pre-auth row
     instrument_id INT NOT NULL REFERENCES instruments(id) ON DELETE CASCADE,
     quantity      INT NOT NULL DEFAULT 0,
     avg_price     NUMERIC(14,4) NOT NULL DEFAULT 0,
@@ -192,6 +215,7 @@ CREATE TABLE IF NOT EXISTS positions (
 CREATE TABLE IF NOT EXISTS equity_curve (
     id         BIGSERIAL PRIMARY KEY,
     account_id INT NOT NULL DEFAULT 1 REFERENCES accounts(id),
+    user_id    INT NULL REFERENCES users(id) ON DELETE CASCADE, -- owner; NULL = legacy pre-auth row
     ts         TIMESTAMPTZ NOT NULL DEFAULT now(),
     equity     NUMERIC(16,2) NOT NULL
 );
@@ -202,9 +226,13 @@ CREATE INDEX IF NOT EXISTS idx_equity_ts ON equity_curve (account_id, ts);
 -- ------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS watchlists (
     id             SERIAL PRIMARY KEY,
+    user_id        INT NULL REFERENCES users(id) ON DELETE CASCADE, -- owner; NULL = legacy global row
+    symbol         VARCHAR(20),                                     -- per-user row form; NULL = legacy array row
     name           VARCHAR(60) NOT NULL DEFAULT 'Default',
-    instrument_ids INT[] NOT NULL DEFAULT '{}',
-    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+    instrument_ids INT[] NOT NULL DEFAULT '{}',                     -- legacy global form (id = 1)
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (user_id, symbol),
+    CONSTRAINT watchlists_owner_ck CHECK (user_id IS NULL OR symbol IS NOT NULL)
 );
 
 -- ------------------------------------------------------------------

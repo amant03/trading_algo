@@ -22,6 +22,7 @@ import {
 import { MarketStore } from './market-store.js';
 import { hub } from './hub.js';
 import { registerRoutes } from './routes.js';
+import { authHook, registerAuthRoutes } from './auth.js';
 
 async function loadInstruments(): Promise<{ instruments: Instrument[]; bySymbol: Map<string, Instrument> }> {
   const res = await query<{
@@ -77,7 +78,11 @@ async function main(): Promise<void> {
     });
   });
 
+  // Attach req.user from Bearer tokens (routes opt into enforcement).
+  app.addHook('onRequest', authHook);
+
   await registerRoutes(app, { store, instruments, bySymbol });
+  await registerAuthRoutes(app);
 
   await app.listen({ port: config.api.port, host: '0.0.0.0' });
   logger.info({ port: config.api.port }, 'api gateway listening');

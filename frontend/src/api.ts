@@ -1,13 +1,34 @@
+export const AUTH_TOKEN_KEY = 'tradealgo.auth.token.v1';
+
+export function getAuthToken(): string | null {
+  try {
+    return localStorage.getItem(AUTH_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
 const BASE = '';
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const token = getAuthToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: { ...headers, ...((init?.headers as Record<string, string> | undefined) ?? {}) },
     ...init,
   });
   if (!res.ok) {
     const body = await res.json().catch(() => null);
-    throw new Error((body as { error?: string })?.error ?? `Request failed (${res.status})`);
+    throw new ApiError(res.status, (body as { error?: string })?.error ?? `Request failed (${res.status})`);
   }
   return res.json() as Promise<T>;
 }

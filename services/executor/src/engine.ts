@@ -13,10 +13,11 @@ import {
   round4,
 } from '@trading/shared';
 
-const ACCOUNT_ID = 1;
+export const LEGACY_ACCOUNT_ID = 1;
 const AUTO_RISK_PCT = 0.03; // per-auto-trade notional as % of equity
 const MAX_POSITIONS = 15; // cap concurrent auto positions
 const SLIPPAGE = 0.0005; // adverse slippage on market fills
+const STARTING_CASH = 100000; // virtual cash for a fresh paper account
 
 interface PositionRow {
   instrumentId: number;
@@ -41,6 +42,11 @@ export class PaperBroker {
   private lastEquitySave = 0;
   private symbols = new Map<number, string>();
 
+  constructor(
+    readonly accountId: number,
+    readonly userId: number | null,
+  ) {}
+
   setSymbols(map: Map<number, string>): void {
     this.symbols = map;
   }
@@ -50,15 +56,20 @@ export class PaperBroker {
   }
 
   async init(): Promise<void> {
+    // Never clobbers an existing row: the API creates user accounts on signup
+    // and this keeps the legacy global account (id 1) alive the same way.
     await query(
-      `INSERT INTO accounts (id, name, cash_balance, initial_capital, equity)
-       VALUES ($1, 'Paper Account', 100000, 100000, 100000)
+      `INSERT INTO accounts (id, user_id, name, cash_balance, initial_capital, equity)
+       VALUES ($1, $2, 'Paper Account', $3, $3, $3)
        ON CONFLICT (id) DO NOTHING`,
-      [ACCOUNT_ID],
+      [this.accountId, this.userId, STARTING_CASH],
     );
+    // Explicit ids never advance the SERIAL sequence — repair it so later
+    // sequence-driven account inserts (new user signups) cannot collide.
+    await query(`SELECT setval('accounts_id_seq', GREATEST((SELECT COALESCE(MAX(id), 0) FROM accounts), 1))`);
     const acc = (await query<{ cash_balance: number; initial_capital: number; equity: number }>(
       'SELECT cash_balance, initial_capital, equity FROM accounts WHERE id = $1',
-      [ACCOUNT_ID],
+      [this.accountId],
     )).rows[0];
     this.cash = Number(acc.cash_balance);
     this.initialCapital = Number(acc.initial_capital);
@@ -66,7 +77,7 @@ export class PaperBroker {
 
     const pos = (await query<{ instrument_id: number; quantity: number; avg_price: number; realized_pnl: number }>(
       'SELECT instrument_id, quantity, avg_price, realized_pnl FROM positions WHERE account_id = $1 AND quantity != 0',
-      [ACCOUNT_ID],
+      [this.accountId],
     )).rows;
     for (const p of pos) {
       this.positions.set(Number(p.instrument_id), {
@@ -103,11 +114,11 @@ export class PaperBroker {
     this.lastEquitySave = now;
     this.recomputeEquity();
     await query(
-      'INSERT INTO equity_curve (account_id, ts, equity) VALUES ($1, to_timestamp($2/1000.0), $3)',
-      [ACCOUNT_ID, now, this.equity],
+      'INSERT INTO equity_curve (account_id, user_id, ts, equity) VALUES ($1, $2, to_timestamp($3/1000.0), $4)',
+      [this.accountId, this.userId, now, this.equity],
     );
-    await query('UPDATE accounts SET cash_balance = $1, equity = $2 WHERE id = $3', [this.cash, this.equity, ACCOUNT_ID]);
-    await publishBatch(TOPICS.equity, [{ payload: { accountId: ACCOUNT_ID, ts: now, equity: this.equity, cash: this.cash }, key: 'account' }]);
+    await query('UPDATE accounts SET cash_balance = $1, equity = $2 WHERE id = $3', [this.cash, this.equity, this.accountId]);
+    await publishBatch(TOPICS.equity, [{ payload: { accountId: this.accountId, ts: now, equity: this.equity, cash: this.cash }, key: `account-${this.accountId}` }]);
   }
 
   /** Process an auto-generated algorithm signal. */
@@ -126,7 +137,7 @@ export class PaperBroker {
         return;
       }
       const order: Order = {
-        id: 0, accountId: ACCOUNT_ID, instrumentId: signal.instrumentId, symbol: signal.symbol,
+        id: 0, accountId: this.accountId, userId: this.userId, instrumentId: signal.instrumentId, symbol: signal.symbol,
         side: 'BUY', orderType: 'MARKET', quantity: qty, limitPrice: null,
         status: 'PENDING', filledQty: 0, avgPrice: null, strategy: signal.strategy,
         createdAt: Date.now(), updatedAt: Date.now(),
@@ -136,7 +147,7 @@ export class PaperBroker {
     } else if (signal.direction === 'SELL') {
       if (!pos || pos.quantity <= 0) return;
       const order: Order = {
-        id: 0, accountId: ACCOUNT_ID, instrumentId: signal.instrumentId, symbol: signal.symbol,
+        id: 0, accountId: this.accountId, userId: this.userId, instrumentId: signal.instrumentId, symbol: signal.symbol,
         side: 'SELL', orderType: 'MARKET', quantity: pos.quantity, limitPrice: null,
         status: 'PENDING', filledQty: 0, avgPrice: null, strategy: signal.strategy,
         createdAt: Date.now(), updatedAt: Date.now(),
@@ -181,9 +192,9 @@ export class PaperBroker {
   /** Insert an order row and return it with a real id. */
   async createOrder(order: Omit<Order, 'id'>): Promise<Order> {
     const res = await query<{ id: number }>(
-      `INSERT INTO orders (account_id, instrument_id, side, order_type, quantity, limit_price, status, strategy)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-      [ACCOUNT_ID, order.instrumentId, order.side, order.orderType, order.quantity, order.limitPrice, 'PENDING', order.strategy],
+      `INSERT INTO orders (account_id, user_id, instrument_id, side, order_type, quantity, limit_price, status, strategy)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+      [this.accountId, this.userId, order.instrumentId, order.side, order.orderType, order.quantity, order.limitPrice, 'PENDING', order.strategy],
     );
     return { ...order, id: res.rows[0].id };
   }
@@ -218,16 +229,16 @@ export class PaperBroker {
         }
         const p = this.positions.get(order.instrumentId)!;
         await client.query(
-          `INSERT INTO positions (account_id, instrument_id, quantity, avg_price)
-           VALUES ($1, $2, $3, $4)
+          `INSERT INTO positions (account_id, user_id, instrument_id, quantity, avg_price)
+           VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (account_id, instrument_id) DO UPDATE SET
              quantity = EXCLUDED.quantity, avg_price = EXCLUDED.avg_price, updated_at = now()`,
-          [ACCOUNT_ID, order.instrumentId, p.quantity, p.avgPrice],
+          [this.accountId, this.userId, order.instrumentId, p.quantity, p.avgPrice],
         );
         await client.query(
-          `INSERT INTO trades (order_id, account_id, instrument_id, side, quantity, price, realized_pnl, strategy, ts)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())`,
-          [order.id, ACCOUNT_ID, order.instrumentId, order.side, order.quantity, price, 0, order.strategy],
+          `INSERT INTO trades (order_id, account_id, user_id, instrument_id, side, quantity, price, realized_pnl, strategy, ts)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`,
+          [order.id, this.accountId, this.userId, order.instrumentId, order.side, order.quantity, price, 0, order.strategy],
         );
       } else {
         const pos = this.positions.get(order.instrumentId);
@@ -243,17 +254,17 @@ export class PaperBroker {
         this.cash = round2(this.cash + proceeds);
         if (pos.quantity <= 0) {
           this.positions.delete(order.instrumentId);
-          await client.query('DELETE FROM positions WHERE account_id = $1 AND instrument_id = $2', [ACCOUNT_ID, order.instrumentId]);
+          await client.query('DELETE FROM positions WHERE account_id = $1 AND instrument_id = $2', [this.accountId, order.instrumentId]);
         } else {
           await client.query(
             `UPDATE positions SET quantity = $1, realized_pnl = $2, updated_at = now() WHERE account_id = $3 AND instrument_id = $4`,
-            [pos.quantity, pos.realizedPnl, ACCOUNT_ID, order.instrumentId],
+            [pos.quantity, pos.realizedPnl, this.accountId, order.instrumentId],
           );
         }
         await client.query(
-          `INSERT INTO trades (order_id, account_id, instrument_id, side, quantity, price, realized_pnl, strategy, ts)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())`,
-          [order.id, ACCOUNT_ID, order.instrumentId, order.side, order.quantity, price, pnl, order.strategy],
+          `INSERT INTO trades (order_id, account_id, user_id, instrument_id, side, quantity, price, realized_pnl, strategy, ts)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`,
+          [order.id, this.accountId, this.userId, order.instrumentId, order.side, order.quantity, price, pnl, order.strategy],
         );
       }
 
@@ -263,7 +274,7 @@ export class PaperBroker {
       );
       await client.query(
         `UPDATE accounts SET cash_balance = $1, equity = $2 WHERE id = $3`,
-        [this.cash, this.cash, ACCOUNT_ID],
+        [this.cash, this.cash, this.accountId],
       );
     });
     } catch (err) {
@@ -278,7 +289,7 @@ export class PaperBroker {
     this.recomputeEquity();
     const filled: Order = { ...order, status: 'FILLED', filledQty: order.quantity, avgPrice: price, updatedAt: Date.now() };
     const trade: Trade = {
-      id: 0, orderId: order.id, accountId: ACCOUNT_ID, instrumentId: order.instrumentId,
+      id: 0, orderId: order.id, accountId: this.accountId, userId: this.userId, instrumentId: order.instrumentId,
       symbol: this.symbolOf(order.instrumentId), side: order.side, quantity: order.quantity,
       price, realizedPnl: order.side === 'SELL' ? round2((price - (order.avgPrice ?? 0)) * order.quantity) : 0,
       strategy: order.strategy, ts: Date.now(),

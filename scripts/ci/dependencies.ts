@@ -54,7 +54,7 @@ const ONLY = (process.env.DEPS_ONLY ?? '').split(',').map((s) => s.trim().toUppe
 const OUT_FILE = join(process.cwd(), 'frontend', 'public', 'dependencies.json');
 const ANALYSIS_FILE = join(process.cwd(), 'frontend', 'public', 'analysis.json');
 const UNIVERSE_FILE = join(process.cwd(), 'frontend', 'public', 'universe.json');
-const ENGINE_VERSION = 4;
+const ENGINE_VERSION = 5;
 
 export type DepBasis = 'disclosed-report' | 'disclosed-rpt' | 'disclosed-fact' | 'inferred-reverse';
 
@@ -77,6 +77,10 @@ export interface DepEntry {
   checkedAt: string;
   note?: string | null;
   engineVersion?: number;
+  about?: { text: string; highlights: string[] } | null;
+  costSplit?: { label: string; pct: number }[] | null;
+  revenueGeo?: { label: string; pct: number }[] | null;
+  factors?: { label: string; evidence: string; source: string }[] | null;
 }
 
 interface LiteCo {
@@ -131,7 +135,15 @@ async function fetchPdfText(url: string): Promise<{ text: string; pages: number 
   const buf = Buffer.from(await res.arrayBuffer());
   if (buf.length > PDF_MAX_BYTES) throw new Error('PDF too large');
   const d = await pdfParse(buf);
-  return { text: d.text.replace(/[ \t\u00a0]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim(), pages: d.numpages };
+  // normalize ligature/control artifacts from embedded subset fonts
+  // ("beneﬁts", "Pro¤it") so keyword matchers see real words
+  const raw = d.text
+    .replace(/ﬁ/g, 'fi')
+    .replace(/ﬂ/g, 'fl')
+    .replace(/ﬀ/g, 'ff')
+    .replace(/¤/g, 'fi')
+    .replace(/[̀-ͯ]/g, '');
+  return { text: raw.replace(/ +/g, ' ').replace(/\n{3,}/g, '\n\n').trim(), pages: d.numpages };
 }
 
 async function tryOnce<T>(fn: () => Promise<T>): Promise<T | null> {
@@ -598,13 +610,297 @@ function mineRPT(text: string, source: string, selfSym: string, selfName: string
   return rows;
 }
 
+// ---- v2 miners: about, cost split, revenue geo split, price factors -------
+// All disclosed-only: every emitted item carries verbatim evidence or comes
+// from a self-validating table (parts sum to a stated total). Anything that
+// fails validation is dropped, never estimated.
+
+function deEnt(s: string): string {
+  return s.replace(/&amp;/g, '&').replace(/&nbsp;|&#160;/g, ' ').replace(/&[a-z]+;/g, ' ');
+}
+
+/** Screener company-profile: about paragraph + key-point highlights. */
+function mineAbout(html: string): { text: string; highlights: string[] } | null {
+  const ci = html.indexOf('company-profile');
+  if (ci < 0) return null;
+  const sec = html.slice(ci, ci + 9000);
+  const end = sec.search(/Read More/i);
+  const scope = end > 0 ? sec.slice(0, end) : sec;
+  const paras: string[] = [];
+  for (const m of scope.matchAll(/<p[^>]*>([\s\S]{20,1500}?)<\/p>/gi)) {
+    const t = deEnt(m[1].replace(/<[^>]+>/g, ' ')).replace(/\[\d+\]/g, '').replace(/\s+/g, ' ').trim();
+    if (t.length >= 60) paras.push(t);
+    if (paras.length >= 2) break;
+  }
+  if (!paras.length || paras[0].length < 80) return null;
+  const highlights = paras.length > 1
+    ? paras[1].split(/(?<=[.!?])\s+(?=[A-Z0-9("])/g).map((s) => s.trim()).filter((s) => s.length > 30 && s.length <= 200).slice(0, 4)
+    : [];
+  return { text: paras[0].slice(0, 600), highlights };
+}
+
+/** Clean standalone number token (international or Indian grouping). Null otherwise. */
+function cleanNum(tok: string): number | null {
+  const t = tok.replace(/[()]/g, '');
+  if (/^\d{1,3}(,\d{3})*(\.\d+)?$/.test(t)) return Number(t.replace(/,/g, ''));
+  if (/^\d{1,2}(,\d{2})*(,\d{3})(\.\d+)?$/.test(t)) return Number(t.replace(/,/g, ''));
+  return null;
+}
+
+function signedNum(tok: string): number | null {
+  const neg = /^\(.*\)$/.test(tok.trim());
+  const v = cleanNum(tok);
+  return v == null ? null : neg ? -v : v;
+}
+
+/**
+ * Which number column is the current year? Notes tables print
+ * "March 31, 2026 March 31, 2025" (current first); division tables print
+ * "FY25 FY26" (current second). Detect from year headers ≤8 lines above.
+ * Returns 0 (current = nums[0]) or 1 (current = nums[1]).
+ */
+function colOrder(lines: string[], blockStart: number): 0 | 1 {
+  for (let i = Math.max(0, blockStart - 8); i < blockStart; i++) {
+    const yrs: number[] = [];
+    for (const m of lines[i].matchAll(/(?:FY\s?)?((?:19|20)\d{2})/gi)) {
+      let y = Number(m[1]);
+      if (m[0].toUpperCase().startsWith('FY') && y < 100) y += 2000;
+      if (m[0].toUpperCase().startsWith('FY') && y < 2000) y += 2000;
+      yrs.push(y);
+    }
+    // FY25 style (2-digit)
+    for (const m of lines[i].matchAll(/FY\s?(\d{2})\b/gi)) yrs.push(2000 + Number(m[1]));
+    if (yrs.length >= 2) return yrs[0] > yrs[1] ? 0 : 1;
+    if (yrs.length === 1) return 0;
+  }
+  return 0;
+}
+
+/**
+ * Revenue geography split from the Ind AS 108 disaggregation note
+ * ("Within India X / Outside India Y" + Total). Picks the pairing whose
+ * parts sum exactly to a stated total (largest total wins = consolidated).
+ */
+function mineRevenueGeo(text: string): { label: string; pct: number }[] | null {
+  const lines = text.split(/\n+/).map((l) => l.replace(/\s+/g, ' ').trim()).filter((l) => l.length > 0);
+  // Split a glued digit run ("89,98570,898") into current/previous-year pair
+  // by trying every split where both sides are clean standalone numbers.
+  const splitPair = (run: string): [number, number][] => {
+    const out: [number, number][] = [];
+    const s = run.replace(/\s+/g, '');
+    for (let k = 1; k < s.length; k++) {
+      const a = signedNum(s.slice(0, k));
+      const b = signedNum(s.slice(k));
+      if (a != null && b != null) out.push([a, b]);
+    }
+    return out;
+  };
+  const numRun = (line: string, label: RegExp): [number, number][] => {
+    const m = line.match(label);
+    if (!m) return [];
+    const run = line.slice(m[0].length).match(/^[(),\d.\s]+/);
+    if (!run) return [];
+    return splitPair(run[0]);
+  };
+  // A total line is either labeled ("Total ...") or a bare number pair
+  // ("121,00598,503") — disaggregated-revenue blocks often print the total
+  // as bare numbers. Bare lines must yield exactly one valid pair.
+  const totalPairs = (line: string): [number, number][] => {
+    const labeled = numRun(line, /^Total\s*/i);
+    if (labeled.length) return labeled;
+    if (/[a-zA-Z]/.test(line)) return [];
+    const run = line.match(/^[(),\d.\s]+/);
+    if (!run) return [];
+    const s = run[0].replace(/\s+/g, '');
+    const out: [number, number][] = [];
+    for (let k = 1; k < s.length; k++) {
+      const a = signedNum(s.slice(0, k));
+      const b = signedNum(s.slice(k));
+      if (a != null && b != null) out.push([a, b]);
+    }
+    return out.length === 1 ? out : [];
+  };
+  interface Geo { a: number; b: number; total: number; la: string; lb: string }
+  const cands: Geo[] = [];
+  const DBG = process.env.DEPS_DEBUG_GEO === '1';
+  // complementary geo label pairs (different companies word it differently)
+  const PAIRS: { a: RegExp; b: RegExp; la: string; lb: string }[] = [
+    { a: /^Within India\s*/i, b: /^Outside India\s*/i, la: 'Within India', lb: 'Outside India' },
+    { a: /^Exports?\s*/i, b: /^Other than exports\s*/i, la: 'Exports', lb: 'Domestic (other than exports)' },
+    { a: /^Domestic\s*/i, b: /^Exports?\s*/i, la: 'Domestic', lb: 'Exports' },
+    { a: /^India\s*/i, b: /^Outside India\s*/i, la: 'India', lb: 'Outside India' },
+  ];
+  for (let i = 0; i < lines.length; i++) {
+    if (!/disaggregation/i.test(lines[i])) continue;
+    if (DBG) console.log(`GEO header L${i}: ${lines[i].slice(0, 80)}`);
+    const c = colOrder(lines, i);
+    if (DBG) console.log(`GEO colOrder=${c}`);
+    for (const P of PAIRS) {
+      for (let j = i + 1; j < Math.min(i + 25, lines.length); j++) {
+        const wp = numRun(lines[j], P.a);
+        if (!wp.length) continue;
+        const op = j + 1 < lines.length ? numRun(lines[j + 1], P.b) : [];
+        if (!op.length) continue;
+        for (let k = j + 2; k < Math.min(j + 7, lines.length); k++) {
+          const tp = totalPairs(lines[k]);
+          if (!tp.length) continue;
+          // anchor: find the (a, b, t) triple whose parts sum to the total
+          let bestErr = Infinity;
+          let best: Geo | null = null;
+          for (const [wa, wb] of wp) {
+            for (const [oa, ob] of op) {
+              for (const [ta, tb] of tp) {
+                const wv = c === 0 ? wa : wb;
+                const ov = c === 0 ? oa : ob;
+                const tv = c === 0 ? ta : tb;
+                if (!(wv > 0) || !(ov >= 0) || !(tv > 0)) continue;
+                const err = Math.abs(wv + ov - tv);
+                if (err < bestErr) { bestErr = err; best = { a: wv, b: ov, total: tv, la: P.la, lb: P.lb }; }
+              }
+            }
+          }
+          if (best && bestErr <= Math.max(2, best.total * 0.005)) cands.push(best);
+          break;
+        }
+      }
+    }
+  }
+  if (!cands.length) return null;
+  cands.sort((a, b) => b.total - a.total);
+  const g = cands[0];
+  return [
+    { label: g.la, pct: Math.round((g.a / g.total) * 1000) / 10 },
+    { label: g.lb, pct: Math.round((g.b / g.total) * 1000) / 10 },
+  ];
+}
+
+const FACTOR_MAP: [RegExp, string][] = [
+  [/crude|petroleum product|atf\b/i, 'Crude oil prices'],
+  [/steel|iron ore|metal prices|aluminium|aluminum/i, 'Steel & metal prices'],
+  [/forex|\bdollar\b|USD\b|\bINR\b|currency|exchange rate|\brupee\b/i, 'USD-INR / forex'],
+  [/interest rate|borrowing cost|\brepo\b|rate hike|rate cut/i, 'Interest rates'],
+  [/monsoon|rainfall/i, 'Monsoon'],
+  [/tariff|customs duty|anti-dumping/i, 'Trade tariffs'],
+  [/regulat|subsidy|government policy/i, 'Regulation & policy'],
+  [/competit|market share|pricing pressure/i, 'Competition'],
+  [/\bdemand\b|cyclical|slowdown|downturn/i, 'Demand cyclicality'],
+  [/commodity|raw material|input cost/i, 'Input costs'],
+  [/inflation|cost inflation|margin pressure/i, 'Cost inflation'],
+  [/npa|default|delinquen|credit cost|provisioning/i, 'Asset quality'],
+  [/claims? experience|underwriting|combined ratio/i, 'Claims experience'],
+  [/freight|logistic|shipping/i, 'Freight & logistics'],
+];
+const RISK_MARKERS = /offset by|constrained by|exposed to|exposure to|sensitive to|sensitivity|volatile|volatility|vulnerable|susceptible|threat|at risk|headwind|monitorable|cyclical|downturn|slowdown|adverse|pressure|uncertain|depends on|dependence on/i;
+const FACTOR_BOILER = /does not create|rating committee|analytical approach|methodology|criteria|chartered accountant|auditor|thank you|good morning|register|login|page \d+ of/i;
+
+/**
+ * Price factors: what can move the stock, stated in rating-rationale
+ * offset clauses and AR risk narratives. Sentence must carry BOTH a risk
+ * marker and a factor noun; every factor ships its verbatim evidence.
+ */
+function mineFactors(text: string, source: string): { label: string; evidence: string; source: string }[] {
+  const out: { label: string; evidence: string; source: string }[] = [];
+  const seen = new Set<string>();
+  for (const sent of sentences(text.replace(/\s+/g, ' '))) {
+    if (sent.length > 600 || FACTOR_BOILER.test(sent)) continue;
+    const mk = RISK_MARKERS.exec(sent);
+    if (!mk || mk.index == null) continue;
+    for (const [re, label] of FACTOR_MAP) {
+      const fm = re.exec(sent);
+      // factor noun must sit near the risk marker — distant co-occurrence
+      // in long sentences is how the false positives happened
+      if (!fm || fm.index == null || Math.abs(fm.index - mk.index) > 200) continue;
+      if (seen.has(label)) break;
+      seen.add(label);
+      const at = Math.max(0, Math.min(fm.index, mk.index) - 60);
+      out.push({ label, evidence: sent.slice(at, at + 220).trim(), source });
+      break;
+    }
+    if (out.length >= 6) break;
+  }
+  return out;
+}
+
+const SCHED_LABELS: [RegExp, string][] = [
+  [/material cost/i, 'Raw materials'],
+  [/manufacturing cost/i, 'Manufacturing'],
+  [/employee cost/i, 'Employee costs'],
+  [/other cost/i, 'Other costs'],
+];
+
+/**
+ * Cost split from Screener's P&L expense schedules
+ * (/api/company/{id}/schedules/?parent=Expenses&section=profit-loss):
+ * clean "% of sales" buckets, consolidated preferred, standalone fallback.
+ * One cheap JSON fetch — no PDF parsing, no glued-number hazards.
+ */
+async function fetchCostSchedule(companyId: string): Promise<{ label: string; pct: number }[] | null> {
+  for (const scope of ['&consolidated=', '']) {
+    try {
+      const res = await fetch(
+        `https://www.screener.in/api/company/${companyId}/schedules/?parent=Expenses&section=profit-loss${scope}`,
+        {
+          headers: { 'User-Agent': UA, Accept: '*/*', 'X-Requested-With': 'XMLHttpRequest' },
+          signal: AbortSignal.timeout(20000),
+        },
+      );
+      if (!res.ok) continue;
+      const j = (await res.json()) as Record<string, Record<string, string>>;
+      const years = Object.values(j)
+        .flatMap((v) => Object.keys(v ?? {}))
+        .filter((k) => /^Mar (19|20)\d\d$/.test(k))
+        .sort();
+      if (!years.length) continue;
+      const latest = years[years.length - 1];
+      const out: { label: string; pct: number }[] = [];
+      for (const [rawLabel, vals] of Object.entries(j)) {
+        const v = Number(String(vals?.[latest] ?? '').replace(/%/g, '').trim());
+        if (!isFinite(v) || v < 0.5 || v > 100) continue;
+        const mapped = SCHED_LABELS.find(([re]) => re.test(rawLabel));
+        out.push({ label: mapped ? mapped[1] : rawLabel.replace(/\s*%\s*$/, '').trim().slice(0, 40), pct: Math.round(v * 10) / 10 });
+        if (out.length >= 8) break;
+      }
+      if (out.length >= 2) return out;
+    } catch { /* try next scope */ }
+  }
+  return null;
+}
+
+/**
+ * Schedules endpoint with patient retries: it runs amid a burst of PDF
+ * downloads per symbol, so transient rate-limits are retried with backoff
+ * instead of silently dropping the cost split.
+ */
+async function fetchCostScheduleRetry(companyId: string, symbol: string): Promise<{ label: string; pct: number }[] | null> {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 2000 * attempt));
+    try {
+      const out = await fetchCostSchedule(companyId);
+      if (out) return out;
+    } catch { /* retry */ }
+  }
+  console.log(`deps: ${symbol} cost-schedule unavailable after retries`);
+  return null;
+}
+
 // ---- screener document discovery -----------------------------------------------------
 
-interface Docs { ar: { url: string; label: string } | null; rationale: { url: string; label: string }[]; transcript: { url: string; label: string } | null; ppt: { url: string; label: string } | null }
+interface Docs {
+  ar: { url: string; label: string } | null;
+  rationale: { url: string; label: string }[];
+  transcript: { url: string; label: string } | null;
+  ppt: { url: string; label: string } | null;
+  about: { text: string; highlights: string[] } | null;
+  companyId: string | null;
+}
 
 async function discoverDocs(symbol: string): Promise<Docs> {
   const html = await fetchText(`https://www.screener.in/company/${encodeURIComponent(symbol)}/`);
-  const out: Docs = { ar: null, rationale: [], transcript: null, ppt: null };
+  const out: Docs = {
+    ar: null, rationale: [], transcript: null, ppt: null,
+    about: mineAbout(html),
+    companyId: (html.match(/data-company-id="(\d+)"/) ?? [])[1] ?? null,
+  };
   const arIdx = html.indexOf('documents annual-reports');
   if (arIdx >= 0) {
     const sec = html.slice(arIdx, arIdx + 6000);
@@ -762,6 +1058,10 @@ function applyReverseGraph(data: Record<string, DepEntry>, names: Map<string, st
       checkedAt: '',
       note: null,
       engineVersion: ENGINE_VERSION,
+      about: null,
+      costSplit: null,
+      revenueGeo: null,
+      factors: [],
     };
     const bucket = row.side === 'supplier' ? cur.suppliers : cur.customers;
     const key = `${row.symbol}|${row.side}`;
@@ -790,14 +1090,24 @@ async function processSymbol(symbol: string, selfName: string): Promise<DepEntry
   try {
     docs = await discoverDocs(symbol);
   } catch {
-    return { suppliers: [], customers: [], sources: [], checkedAt: new Date().toISOString(), note: null, engineVersion: ENGINE_VERSION };
+    return { suppliers: [], customers: [], sources: [], checkedAt: new Date().toISOString(), note: null, engineVersion: ENGINE_VERSION, about: null, costSplit: null, revenueGeo: null, factors: [] };
   }
+  const about = docs.about;
+  const factors: { label: string; evidence: string; source: string }[] = [];
+  // Cost split via Screener expense schedules (clean % of sales, no PDF glue)
+  let costSplit: { label: string; pct: number }[] | null = null;
+  if (docs.companyId) {
+    costSplit = await fetchCostScheduleRetry(docs.companyId, symbol);
+  }
+  let revenueGeo: { label: string; pct: number }[] | null = null;
 
   for (const r of docs.rationale) {
     const html = await tryOnce(() => fetchText(r.url));
     if (!html) continue;
     sources.push({ label: r.label, url: r.url });
-    push(mineSentences(cleanHtml(html), r.label, symbol));
+    const clean = cleanHtml(html);
+    push(mineSentences(clean, r.label, symbol));
+    factors.push(...mineFactors(clean, r.label));
   }
   if (docs.ar) {
     const pdf = await tryOnce(() => fetchPdfText(docs.ar!.url));
@@ -805,6 +1115,8 @@ async function processSymbol(symbol: string, selfName: string): Promise<DepEntry
       sources.push({ label: docs.ar.label, url: docs.ar.url });
       push(mineRPT(pdf.text, docs.ar.label, symbol, selfName));
       push(mineSentences(pdf.text, docs.ar.label, symbol));
+      revenueGeo = mineRevenueGeo(pdf.text);
+      factors.push(...mineFactors(pdf.text, docs.ar.label));
     }
   }
   for (const doc of [docs.transcript, docs.ppt]) {
@@ -816,6 +1128,14 @@ async function processSymbol(symbol: string, selfName: string): Promise<DepEntry
   }
 
   const ranked = rankDedupe([...suppliers, ...customers], null);
+  // cross-source factor dedupe (same factor stated in rationale + AR):
+  // keep the first occurrence, cap at six
+  const seenFactors = new Set<string>();
+  const uniqFactors = factors.filter((f) => {
+    if (seenFactors.has(f.label)) return false;
+    seenFactors.add(f.label);
+    return true;
+  }).slice(0, 6);
   return {
     suppliers: ranked.suppliers,
     customers: ranked.customers,
@@ -823,6 +1143,10 @@ async function processSymbol(symbol: string, selfName: string): Promise<DepEntry
     checkedAt: new Date().toISOString(),
     note: ranked.note,
     engineVersion: ENGINE_VERSION,
+    about,
+    costSplit,
+    revenueGeo,
+    factors: uniqFactors,
   };
 }
 
@@ -934,7 +1258,7 @@ async function main(): Promise<void> {
     const old = data[c.symbol];
     if (!old || !old.checkedAt) return true;
     if (new Date(old.checkedAt).getTime() < staleCutoff) return true;
-    if ((old.engineVersion ?? 0) < ENGINE_VERSION && listedCount(old) === 0) return true;
+    if ((old.engineVersion ?? 0) < ENGINE_VERSION) return true;
     return false;
   };
 

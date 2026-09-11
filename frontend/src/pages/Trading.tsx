@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { get, post } from '../api';
 import { useLive } from '../ws';
+import { useAuth } from '../auth';
 import { fmt, fmtPct, fmtMoney, fmtTime, cls } from '../format';
 import { useToast } from '../components/Toasts';
 import { DirectionBadge, StatusBadge } from '../components/Badge';
@@ -55,6 +56,7 @@ function EquityChart({ points }: { points: { ts: number; equity: number }[] }) {
 export default function Trading() {
   const navigate = useNavigate();
   const toast = useToast();
+  const user = useAuth((s) => s.user);
   const liveOrders = useLive((s) => s.orders);
   const liveTrades = useLive((s) => s.trades);
 
@@ -133,6 +135,9 @@ export default function Trading() {
       <h1 style={{ marginBottom: 4 }}>Trading Console</h1>
       <p className="muted" style={{ marginBottom: 20, fontSize: 13 }}>
         Paper trading — every signal from the algorithm engine is auto-executed with a 30 bps cost model.
+        {user && (
+          <> Signed in as <b style={{ color: 'var(--text)' }}>{user.displayName}</b> · your paper portfolio persists across sessions.</>
+        )}
       </p>
 
       <div className="stat-grid">

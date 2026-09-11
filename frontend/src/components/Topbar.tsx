@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Link, NavLink } from 'react-router-dom';
+import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { useLive, type FeedMode } from '../ws';
+import { useAuth } from '../auth';
 import { fmtTime } from '../format';
 import StockSearch from './StockSearch';
 
@@ -30,6 +31,9 @@ const MODE_COLOR: Record<FeedMode, { fg: string; bg: string; dot: string }> = {
 
 export default function Topbar() {
   const mode = useLive((s) => s.mode);
+  const user = useAuth((s) => s.user);
+  const logout = useAuth((s) => s.logout);
+  const navigate = useNavigate();
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
@@ -59,6 +63,25 @@ export default function Topbar() {
       </nav>
       <StockSearch />
       <div className="topbar-right">
+        {user ? (
+          <span className="account-menu">
+            <span className="account-name" title={user.email}>{user.displayName}</span>
+            <button
+              className="account-logout"
+              onClick={() => {
+                logout();
+                navigate('/');
+              }}
+            >
+              Logout
+            </button>
+          </span>
+        ) : (
+          <span className="account-menu">
+            <Link to="/login" className="account-link">Log in</Link>
+            <Link to="/signup" className="account-link signup">Sign up</Link>
+          </span>
+        )}
         <span className="mono muted" style={{ fontSize: 12 }}>
           {fmtTime(now)}
         </span>
