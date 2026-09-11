@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { ApiError, AUTH_TOKEN_KEY, get as apiGet, post as apiPost, patch as apiPatch } from './api';
 import type { AuthResponse, AuthUser } from './types';
+import { syncWatchlist } from './ws';
 
 const USER_KEY = 'tradealgo.auth.user.v1';
 
@@ -61,6 +62,7 @@ export const useAuth = create<AuthState>((set, get) => ({
       const r = await apiPost<AuthResponse>('/auth/signup', { email, password, displayName });
       persist(r.token, r.user);
       set({ token: r.token, user: r.user, ready: true, busy: false });
+      void syncWatchlist();
       return true;
     } catch (e) {
       set({ busy: false, error: (e as Error).message });
@@ -74,6 +76,7 @@ export const useAuth = create<AuthState>((set, get) => ({
       const r = await apiPost<AuthResponse>('/auth/login', { email, password });
       persist(r.token, r.user);
       set({ token: r.token, user: r.user, ready: true, busy: false });
+      void syncWatchlist();
       return true;
     } catch (e) {
       set({ busy: false, error: (e as Error).message });
