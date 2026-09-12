@@ -4,6 +4,7 @@ build/
 .env
 .env.local
 .env.*
+!.env.example
 docker/Caddyfile
 *.log
 .DS_Store
