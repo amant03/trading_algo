@@ -12,7 +12,8 @@
 //   * dependencies.json — remote per-symbol entries we don't have (or that are
 //     fresher upstream) are carried in; the engine is incremental so a run
 //     must never drop another run's freshly checked symbols.
-//   * snapshot.json / paper/* / reports/* — local (generated this run) wins.
+//   * paper/daily.json — MERGED by day (see unionDaily): every archived day survives; `today` keeps the newer side by updatedAt.
+//   * snapshot.json / paper/latest.json / paper/state.json / reports/* — local (generated this run) wins.
 //
 // Reads the branch via raw.githubusercontent.com (public repo, no auth). No deps.
 
@@ -165,11 +166,45 @@ async function unionDependencies() {
   console.log(`merge-artifacts: dependencies union +${added} remote entries -> ${local.coverage} covered`);
 }
 
+function dayScore(d) {
+  if (!d || typeof d !== 'object') return -1;
+  const trades = Array.isArray(d.trades) ? d.trades.length : 0;
+  const pnl = typeof d.realizedPnl === 'number' ? Math.abs(d.realizedPnl) : 0;
+  const upd = Date.parse(d.updatedAt ?? '') || 0;
+  return trades * 1e12 + pnl + upd / 1e9;
+}
+
+async function unionDaily() {
+  const local = readJson('paper/daily.json');
+  const remoteRaw = await fetchRemote('paper/daily.json');
+  if (!local || !remoteRaw) return;
+  let remote;
+  try {
+    remote = JSON.parse(remoteRaw);
+  } catch {
+    return;
+  }
+  if (!remote || typeof remote !== 'object') return;
+  const byDate = new Map();
+  for (const d of [...(remote.days ?? []), ...(local.days ?? [])]) {
+    if (!d || !d.date) continue;
+    const cur = byDate.get(d.date);
+    if (!cur || dayScore(d) > dayScore(cur)) byDate.set(d.date, d);
+  }
+  local.days = [...byDate.values()].sort((a, b) => (a.date < b.date ? -1 : 1));
+  const lt = Date.parse(local.today?.updatedAt ?? '') || 0;
+  const rt = Date.parse(remote.today?.updatedAt ?? '') || 0;
+  if (remote.today && rt > lt) local.today = remote.today;
+  writeFileSync(join(PUBLIC, 'paper/daily.json'), JSON.stringify(local));
+  console.log(`merge-artifacts: paper/daily union -> ${local.days.length} archived days`);
+}
+
 async function main() {
   await unionAnalysis();
   await unionNews();
   await unionSignals();
   await unionDependencies();
+  await unionDaily();
   // sanity: refresh any gating artifact that was only present upstream
   for (const rel of ['snapshot.json', 'paper/latest.json', 'paper/state.json', 'paper/daily.json', 'signals.json', 'dependencies.json']) {
     if (!existsSync(join(PUBLIC, rel))) {
