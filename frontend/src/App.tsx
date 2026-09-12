@@ -11,6 +11,7 @@ import Trading from './pages/Trading';
 import Algorithms from './pages/Algorithms';
 import Watchlist from './pages/Watchlist';
 import Paper from './pages/Paper';
+import US from './pages/US';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import About from './pages/About';
@@ -33,6 +34,7 @@ export default function App() {
             <Route path="/algorithms" element={<RequireAuth><Algorithms /></RequireAuth>} />
             <Route path="/watchlist" element={<RequireAuth><Watchlist /></RequireAuth>} />
             <Route path="/paper" element={<Paper />} />
+            <Route path="/us" element={<US />} />
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<Signup />} />
             <Route path="/about" element={<About />} />

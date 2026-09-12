@@ -7,6 +7,7 @@ import StockSearch from './StockSearch';
 
 const NAV = [
   { to: '/', label: 'Dashboard' },
+  { to: '/us', label: 'USA' },
   { to: '/trading', label: 'Trading' },
   { to: '/algorithms', label: 'Algorithms' },
   { to: '/paper', label: 'Paper Lab' },
