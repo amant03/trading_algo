@@ -481,13 +481,9 @@ export async function registerRoutes(app: FastifyInstance, ctx: Ctx): Promise<vo
       'SELECT symbol FROM watchlists WHERE user_id = $1 AND symbol IS NOT NULL ORDER BY created_at',
       [req.user.id],
     );
-    const syms = new Set(res.rows.map((r) => r.symbol.toUpperCase()));
-    return instruments
-      .filter((i) => syms.has(i.symbol))
-      .map((inst) => {
-        const snap = store.getSnapshot(inst.id);
-        return { ...inst, price: snap?.price ?? inst.basePrice, changePct: snap?.changePct ?? 0 };
-      });
+    // string[] — same contract as the serverless /api/watchlist (the
+    // frontend merges this into its local list).
+    return [...new Set(res.rows.map((r) => r.symbol.toUpperCase()))];
   });
 
   app.post<{ Params: { symbol: string } }>('/api/watchlist/:symbol', { preHandler: requireAuth }, async (req, reply) => {
