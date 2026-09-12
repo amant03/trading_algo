@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
+import USMarket from '../components/USMarket';
 
 interface PosRow {
   strategy: string;
@@ -365,6 +366,7 @@ export default function Paper() {
   const [report, setReport] = useState<PaperReport | null>(null);
   const [daily, setDaily] = useState<DailyReport | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [tab, setTab] = useState<'paper' | 'us'>('paper');
 
   useEffect(() => {
     let live = true;
@@ -438,6 +440,19 @@ export default function Paper() {
         </div>
       </div>
 
+      <div className="tabs" style={{ marginBottom: 16 }}>
+        <button className={tab === 'paper' ? 'active' : ''} onClick={() => setTab('paper')}>
+          📈 India Paper Lab
+        </button>
+        <button className={tab === 'us' ? 'active' : ''} onClick={() => setTab('us')}>
+          🇺🇸 US Market
+        </button>
+      </div>
+
+      {tab === 'us' && <USMarket />}
+
+      {tab === 'paper' && (
+      <>
       {err && <div className="empty">{err}</div>}
       {!r && !err && !daily && <div className="empty">Loading paper account…</div>}
 
@@ -694,6 +709,8 @@ export default function Paper() {
             <SwingTradesTable trades={r.transactions ?? r.recentTrades} />
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   );
