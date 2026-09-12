@@ -16,7 +16,7 @@ export class ApiError extends Error {
   }
 }
 
-const BASE = '';
+const BASE: string = import.meta.env.VITE_API_URL ?? '';
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };

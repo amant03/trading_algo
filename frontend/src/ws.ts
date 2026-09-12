@@ -136,11 +136,10 @@ export const useLive = create<LiveState>((set, get) => ({
     saveWatchlist(next);
     // watchlisted symbols get priority on-demand fundamentals immediately
     if (!had) void ensureFundamentals([sym]);
-    // best-effort server sync — never blocks or errors the UI on the static
-    // deploy (there is no backend, so /api/watchlist 404s; local wins).
-    // Single-function serverless route takes the symbol as a query param.
-    if (!had) post(`/api/watchlist?symbol=${encodeURIComponent(sym)}`, {}).catch(() => {});
-    else del(`/api/watchlist?symbol=${encodeURIComponent(sym)}`).catch(() => {});
+    // best-effort server sync — never blocks or errors the UI when there is
+    // no backend (local list wins).
+    if (!had) post(`/api/watchlist/${encodeURIComponent(sym)}`, {}).catch(() => {});
+    else del(`/api/watchlist/${encodeURIComponent(sym)}`).catch(() => {});
     return !had;
   },
   updateSnapshots: (items) => {

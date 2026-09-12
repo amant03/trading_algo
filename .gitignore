@@ -4,6 +4,7 @@ build/
 .env
 .env.local
 .env.*
+docker/Caddyfile
 *.log
 .DS_Store
 coverage/

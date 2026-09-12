@@ -39,7 +39,11 @@ jobs:
           npm i -g vercel@latest --no-audit --no-fund
 
       - name: Deploy to Vercel (production)
-        run: vercel deploy --prod --yes --token "${{ secrets.VERCEL_TOKEN }}"
+        # VITE_API_URL (optional repo secret): https origin of the self-hosted
+        # API (e.g. https://203-0-113-10.nip.io). Baked into the bundle at
+        # build time; when unset the frontend stays same-origin (static/CDN
+        # mode exactly as before).
+        run: vercel deploy --prod --yes --token "${{ secrets.VERCEL_TOKEN }}" --build-env VITE_API_URL="${{ secrets.VITE_API_URL }}"
         env:
           VERCEL_ORG_ID: ${{ env.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ env.VERCEL_PROJECT_ID }}

@@ -59,9 +59,9 @@ export const useAuth = create<AuthState>((set, get) => ({
   signup: async (email, password, displayName) => {
     set({ busy: true, error: null });
     try {
-      // Direct function path (no rewrite): works on Vercel serverless and,
-      // via the /api/auth alias, on the local Fastify backend too.
-      const r = await apiPost<AuthResponse>('/api/auth?op=signup', { email, password, displayName });
+      // BASE points at the self-hosted API in production (VITE_API_URL) and
+      // stays same-origin in local dev — the backend serves /auth/* natively.
+      const r = await apiPost<AuthResponse>('/auth/signup', { email, password, displayName });
       persist(r.token, r.user);
       set({ token: r.token, user: r.user, ready: true, busy: false });
       void syncWatchlist();
@@ -75,7 +75,7 @@ export const useAuth = create<AuthState>((set, get) => ({
   login: async (email, password) => {
     set({ busy: true, error: null });
     try {
-      const r = await apiPost<AuthResponse>('/api/auth?op=login', { email, password });
+      const r = await apiPost<AuthResponse>('/auth/login', { email, password });
       persist(r.token, r.user);
       set({ token: r.token, user: r.user, ready: true, busy: false });
       void syncWatchlist();
@@ -88,7 +88,7 @@ export const useAuth = create<AuthState>((set, get) => ({
 
   logout: () => {
     const { token } = get();
-    if (token) apiPost('/api/auth?op=logout', {}).catch(() => {});
+    if (token) apiPost('/auth/logout', {}).catch(() => {});
     persist(null, null);
     set({ token: null, user: null, ready: true, error: null });
   },
@@ -100,7 +100,7 @@ export const useAuth = create<AuthState>((set, get) => ({
       return;
     }
     try {
-      const r = await apiGet<{ user: AuthUser; accountId: number }>('/api/auth?op=me');
+      const r = await apiGet<{ user: AuthUser; accountId: number }>('/auth/me');
       persist(token, r.user);
       set({ user: r.user, ready: true });
     } catch (e) {
@@ -120,7 +120,7 @@ export const useAuth = create<AuthState>((set, get) => ({
     const { token, user } = get();
     if (!token || !user || user.hasOnboarded) return;
     try {
-      const r = await apiPatch<{ user: AuthUser }>('/api/auth?op=me', { hasOnboarded: true });
+      const r = await apiPatch<{ user: AuthUser }>('/auth/me', { hasOnboarded: true });
       persist(token, r.user);
       set({ user: r.user });
     } catch {

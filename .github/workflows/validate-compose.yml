@@ -1,0 +1,32 @@
+name: Validate Compose
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docker-compose.yml'
+      - 'docker/**'
+      - 'scripts/cloud-init.sh'
+      - '.env.example'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Shellcheck cloud-init
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck -S warning scripts/cloud-init.sh
+
+      - name: Validate compose file
+        run: |
+          cp .env.example .env
+          echo 'DOMAIN=203-0-113-10.nip.io' >> .env
+          docker compose config --quiet && echo 'compose file valid'
+
+      - name: Build service image
+        run: docker build -f docker/Dockerfile.svc -t tradealgo-svc:ci .

@@ -1,0 +1,23 @@
+# Single image for all Node services (api, executor, market-data,
+# fundamentals, algorithm-engine, news). Services run via tsx — the root
+# tsconfig is typecheck-only (noEmit), so there is no separate build step.
+# 100% open-source base: node:20-slim (Debian).
+FROM node:20-slim
+WORKDIR /app
+
+# Install deps first for layer caching (npm workspaces: root + services/*).
+COPY package.json package-lock.json ./
+COPY services/shared/package.json ./services/shared/
+COPY services/api/package.json ./services/api/
+COPY services/executor/package.json ./services/executor/
+COPY services/market-data/package.json ./services/market-data/
+COPY services/fundamentals/package.json ./services/fundamentals/
+COPY services/algorithm-engine/package.json ./services/algorithm-engine/
+COPY services/news/package.json ./services/news/
+RUN npm ci --include=dev --no-audit --no-fund
+
+COPY . .
+
+# Overridden per service in docker-compose.yml, e.g.:
+#   command: ["npx", "tsx", "services/api/src/index.ts"]
+CMD ["npx", "tsx", "services/api/src/index.ts"]

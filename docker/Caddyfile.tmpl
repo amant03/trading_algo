@@ -1,0 +1,8 @@
+# Caddy template. cloud-init copies this to ./docker/Caddyfile with __DOMAIN__
+# replaced by the VM's <ip-dashes>.nip.io hostname (free wildcard DNS, no
+# account needed) and Caddy issues real Let's Encrypt TLS automatically.
+# Adminer is intentionally NOT exposed here — reach it over an SSH tunnel
+# (ssh -L 8080:localhost:8080 ubuntu@<vm-ip>, then http://localhost:8080).
+__DOMAIN__ {
+    reverse_proxy api:8080
+}
