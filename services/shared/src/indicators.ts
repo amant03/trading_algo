@@ -16,16 +16,32 @@ export function sma(values: number[], period: number): number[] {
   return out;
 }
 
-/** Exponential moving average (seeded with SMA). */
+/** Exponential moving average (seeded with SMA). NaN inputs are skipped so a
+ *  NaN-prefixed series (e.g. the MACD line before the slow EMA exists) still
+ *  produces values once enough finite data is available, aligned to input. */
 export function ema(values: number[], period: number): number[] {
   const out = new Array<number>(values.length).fill(NaN);
-  if (values.length < period) return out;
   const k = 2 / (period + 1);
   let seed = 0;
-  for (let i = 0; i < period; i++) seed += values[i];
-  out[period - 1] = seed / period;
-  for (let i = period; i < values.length; i++) {
-    out[i] = values[i] * k + out[i - 1] * (1 - k);
+  let count = 0;
+  let prev = NaN;
+  for (let i = 0; i < values.length; i++) {
+    const v = values[i];
+    if (typeof v !== 'number' || Number.isNaN(v)) {
+      out[i] = NaN;
+      continue;
+    }
+    if (count < period) {
+      seed += v;
+      count += 1;
+      if (count === period) {
+        prev = seed / period;
+        out[i] = prev;
+      }
+      continue;
+    }
+    prev = v * k + prev * (1 - k);
+    out[i] = prev;
   }
   return out;
 }

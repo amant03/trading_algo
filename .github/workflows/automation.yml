@@ -106,6 +106,8 @@ jobs:
             -o frontend/public/paper/state.json || echo "no paper state yet"
           curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/paper/daily.json \
             -o frontend/public/paper/daily.json || echo "no daily paper state yet"
+          curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/paper/week.json \
+            -o frontend/public/paper/week.json || echo "no weekly duel state yet"
 
       - name: Paper live-stop (market hours)
         if: env.MODE == 'news'
@@ -117,6 +119,12 @@ jobs:
       - name: Daily Paper trade (market hours)
         if: env.MODE == 'news'
         run: node node_modules/tsx/dist/cli.mjs scripts/ci/paper-daily.ts
+
+      # Weekly Duel (market hours): fresh ₹10,000 (NSE) + $1,000 (US) every
+      # day, 5 sessions replayed, 1% stop, no take-profit (see paper-week.ts).
+      - name: Weekly Duel paper trade (market hours)
+        if: env.MODE == 'news'
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/paper-week.ts
 
       # ---- full pipeline (once a day + manual) ----------------------------
       - name: Apply database schema
@@ -244,6 +252,8 @@ jobs:
             -o frontend/public/paper/state.json || echo "no previous paper state — first seed run"
           curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/paper/daily.json \
             -o frontend/public/paper/daily.json || echo "no previous daily paper state — first seed run"
+          curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/paper/week.json \
+            -o frontend/public/paper/week.json || echo "no previous weekly duel state — first seed run"
 
       # Paper trading: 5 classic strategies on a ₹1,00,000 virtual account,
       # advanced one trading day per run (see scripts/ci/paper.ts).
@@ -258,6 +268,12 @@ jobs:
       - name: Daily Paper trade
         if: env.MODE == 'full'
         run: node node_modules/tsx/dist/cli.mjs scripts/ci/paper-daily.ts
+
+      # Weekly Duel: fresh ₹10,000 (NSE) + $1,000 (US) per day over the last
+      # 5 sessions, 1% stop-loss, unlimited upside, EOD square-off.
+      - name: Weekly Duel paper trade
+        if: env.MODE == 'full'
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/paper-week.ts
 
       - name: Job summary
         if: always()

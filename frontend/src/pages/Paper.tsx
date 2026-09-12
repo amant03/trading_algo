@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import USMarket from '../components/USMarket';
+import WeekDuel from '../components/WeekDuel';
 
 interface PosRow {
   strategy: string;
@@ -366,7 +367,7 @@ export default function Paper() {
   const [report, setReport] = useState<PaperReport | null>(null);
   const [daily, setDaily] = useState<DailyReport | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [tab, setTab] = useState<'paper' | 'us'>('paper');
+  const [tab, setTab] = useState<'paper' | 'us' | 'week'>('paper');
 
   useEffect(() => {
     let live = true;
@@ -447,7 +448,12 @@ export default function Paper() {
         <button className={tab === 'us' ? 'active' : ''} onClick={() => setTab('us')}>
           🇺🇸 US Market
         </button>
+        <button className={tab === 'week' ? 'active' : ''} onClick={() => setTab('week')}>
+          🗓️ Week Duel
+        </button>
       </div>
+
+      {tab === 'week' && <WeekDuel />}
 
       {tab === 'us' && <USMarket />}
 
