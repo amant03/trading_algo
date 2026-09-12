@@ -161,46 +161,91 @@ export async function ensureAccount(userId: number): Promise<number> {
 
 const EMAIL_RE = /^\S+@\S+\.\S+$/;
 
+type HandlerResult = { status: number; body: unknown };
+
+async function doSignup(emailIn: string, passwordIn: string, displayNameIn: string): Promise<HandlerResult> {
+  const email = (emailIn ?? '').trim().toLowerCase();
+  const password = passwordIn ?? '';
+  const displayName = (displayNameIn ?? '').trim() || email.split('@')[0] || 'Trader';
+  if (!EMAIL_RE.test(email)) return { status: 400, body: { error: 'valid email required' } };
+  if (password.length < 8) return { status: 400, body: { error: 'password must be at least 8 characters' } };
+  if (displayName.length > 80) return { status: 400, body: { error: 'display name too long' } };
+  const dupe = await query<{ id: number }>('SELECT id FROM users WHERE email = $1', [email]);
+  if (dupe.rows[0]) return { status: 409, body: { error: 'email already registered' } };
+  const passwordHash = await hashPassword(password);
+  const created = await query<UserRow>(
+    `INSERT INTO users (email, password_hash, display_name, auth_provider)
+     VALUES ($1, $2, $3, 'email') RETURNING *`,
+    [email, passwordHash, displayName.slice(0, 80)],
+  );
+  const user = toPublicUser(created.rows[0]);
+  const accountId = await ensureAccount(user.id);
+  logger.info({ userId: user.id, email }, 'user signed up');
+  return { status: 201, body: { token: signToken(user.id, user.email), user, accountId } };
+}
+
+async function doLogin(emailIn: string, passwordIn: string): Promise<HandlerResult> {
+  const email = (emailIn ?? '').trim().toLowerCase();
+  const password = passwordIn ?? '';
+  if (!EMAIL_RE.test(email) || !password) {
+    return { status: 401, body: { error: 'invalid email or password' } };
+  }
+  const found = await query<UserRow>('SELECT * FROM users WHERE email = $1', [email]);
+  const row = found.rows[0];
+  if (!row || !row.password_hash || !(await verifyPassword(password, row.password_hash))) {
+    return { status: 401, body: { error: 'invalid email or password' } };
+  }
+  await query('UPDATE users SET last_login_at = now() WHERE id = $1', [row.id]);
+  const user = toPublicUser({ ...row, last_login_at: new Date() });
+  const accountId = await ensureAccount(user.id);
+  return { status: 200, body: { token: signToken(user.id, user.email), user, accountId } };
+}
+
+async function doGetMe(userId: number): Promise<HandlerResult> {
+  const found = await query<UserRow>('SELECT * FROM users WHERE id = $1', [userId]);
+  if (!found.rows[0]) return { status: 401, body: { error: 'authentication required' } };
+  const user = toPublicUser(found.rows[0]);
+  const accountId = await ensureAccount(user.id);
+  return { status: 200, body: { user, accountId } };
+}
+
+async function doPatchMe(userId: number, patch: { displayName?: string; hasOnboarded?: boolean }): Promise<HandlerResult> {
+  const patches: string[] = [];
+  const params: unknown[] = [];
+  if (patch?.displayName !== undefined) {
+    const name = patch.displayName.trim();
+    if (!name || name.length > 80) return { status: 400, body: { error: 'display name must be 1-80 characters' } };
+    params.push(name);
+    patches.push(`display_name = $${params.length}`);
+  }
+  if (patch?.hasOnboarded !== undefined) {
+    params.push(Boolean(patch.hasOnboarded));
+    patches.push(`has_onboarded = $${params.length}`);
+  }
+  if (!patches.length) return { status: 400, body: { error: 'nothing to update' } };
+  params.push(userId);
+  const updated = await query<UserRow>(
+    `UPDATE users SET ${patches.join(', ')} WHERE id = $${params.length} RETURNING *`,
+    params,
+  );
+  if (!updated.rows[0]) return { status: 401, body: { error: 'authentication required' } };
+  const user = toPublicUser(updated.rows[0]);
+  const accountId = await ensureAccount(user.id);
+  return { status: 200, body: { user, accountId } };
+}
+
 export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Body: { email?: string; password?: string; displayName?: string } }>(
     '/auth/signup',
     async (req, reply) => {
-      const email = (req.body?.email ?? '').trim().toLowerCase();
-      const password = req.body?.password ?? '';
-      const displayName = (req.body?.displayName ?? '').trim() || email.split('@')[0] || 'Trader';
-      if (!EMAIL_RE.test(email)) return reply.code(400).send({ error: 'valid email required' });
-      if (password.length < 8) return reply.code(400).send({ error: 'password must be at least 8 characters' });
-      if (displayName.length > 80) return reply.code(400).send({ error: 'display name too long' });
-      const dupe = await query<{ id: number }>('SELECT id FROM users WHERE email = $1', [email]);
-      if (dupe.rows[0]) return reply.code(409).send({ error: 'email already registered' });
-      const passwordHash = await hashPassword(password);
-      const created = await query<UserRow>(
-        `INSERT INTO users (email, password_hash, display_name, auth_provider)
-         VALUES ($1, $2, $3, 'email') RETURNING *`,
-        [email, passwordHash, displayName.slice(0, 80)],
-      );
-      const user = toPublicUser(created.rows[0]);
-      const accountId = await ensureAccount(user.id);
-      logger.info({ userId: user.id, email }, 'user signed up');
-      return reply.code(201).send({ token: signToken(user.id, user.email), user, accountId });
+      const r = await doSignup(req.body?.email ?? '', req.body?.password ?? '', req.body?.displayName ?? '');
+      return reply.code(r.status).send(r.body);
     },
   );
 
   app.post<{ Body: { email?: string; password?: string } }>('/auth/login', async (req, reply) => {
-    const email = (req.body?.email ?? '').trim().toLowerCase();
-    const password = req.body?.password ?? '';
-    if (!EMAIL_RE.test(email) || !password) {
-      return reply.code(401).send({ error: 'invalid email or password' });
-    }
-    const found = await query<UserRow>('SELECT * FROM users WHERE email = $1', [email]);
-    const row = found.rows[0];
-    if (!row || !row.password_hash || !(await verifyPassword(password, row.password_hash))) {
-      return reply.code(401).send({ error: 'invalid email or password' });
-    }
-    await query('UPDATE users SET last_login_at = now() WHERE id = $1', [row.id]);
-    const user = toPublicUser({ ...row, last_login_at: new Date() });
-    const accountId = await ensureAccount(user.id);
-    return { token: signToken(user.id, user.email), user, accountId };
+    const r = await doLogin(req.body?.email ?? '', req.body?.password ?? '');
+    return reply.code(r.status).send(r.body);
   });
 
   // Stateless sessions: the client drops its token. Endpoint exists so the
@@ -208,39 +253,52 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
   app.post('/auth/logout', async () => ({ ok: true }));
 
   app.get('/auth/me', { preHandler: requireAuth }, async (req, reply) => {
-    const found = await query<UserRow>('SELECT * FROM users WHERE id = $1', [req.user!.id]);
-    if (!found.rows[0]) return reply.code(401).send({ error: 'authentication required' });
-    const user = toPublicUser(found.rows[0]);
-    const accountId = await ensureAccount(user.id);
-    return { user, accountId };
+    const r = await doGetMe(req.user!.id);
+    return reply.code(r.status).send(r.body);
   });
 
   app.patch<{ Body: { displayName?: string; hasOnboarded?: boolean } }>(
     '/auth/me',
     { preHandler: requireAuth },
     async (req, reply) => {
-      const patches: string[] = [];
-      const params: unknown[] = [];
-      if (req.body?.displayName !== undefined) {
-        const name = req.body.displayName.trim();
-        if (!name || name.length > 80) return reply.code(400).send({ error: 'display name must be 1-80 characters' });
-        params.push(name);
-        patches.push(`display_name = $${params.length}`);
+      const r = await doPatchMe(req.user!.id, req.body ?? {});
+      return reply.code(r.status).send(r.body);
+    },
+  );
+
+  // Local-dev alias mirroring the serverless /api/auth?op= shape, so the
+  // frontend (which calls /api/auth?op=...) works unchanged against both
+  // the local Fastify backend and the Vercel functions.
+  app.post<{ Querystring: { op?: string }; Body: { email?: string; password?: string; displayName?: string } }>(
+    '/api/auth',
+    async (req, reply) => {
+      const op = (req.query.op ?? '').toLowerCase();
+      if (op === 'signup') {
+        const r = await doSignup(req.body?.email ?? '', req.body?.password ?? '', req.body?.displayName ?? '');
+        return reply.code(r.status).send(r.body);
       }
-      if (req.body?.hasOnboarded !== undefined) {
-        params.push(Boolean(req.body.hasOnboarded));
-        patches.push(`has_onboarded = $${params.length}`);
+      if (op === 'login') {
+        const r = await doLogin(req.body?.email ?? '', req.body?.password ?? '');
+        return reply.code(r.status).send(r.body);
       }
-      if (!patches.length) return reply.code(400).send({ error: 'nothing to update' });
-      params.push(req.user!.id);
-      const updated = await query<UserRow>(
-        `UPDATE users SET ${patches.join(', ')} WHERE id = $${params.length} RETURNING *`,
-        params,
-      );
-      if (!updated.rows[0]) return reply.code(401).send({ error: 'authentication required' });
-      const user = toPublicUser(updated.rows[0]);
-      const accountId = await ensureAccount(user.id);
-      return { user, accountId };
+      if (op === 'logout') return { ok: true };
+      return reply.code(404).send({ error: 'not found' });
+    },
+  );
+
+  app.get<{ Querystring: { op?: string } }>('/api/auth', { preHandler: requireAuth }, async (req, reply) => {
+    if ((req.query.op ?? '').toLowerCase() !== 'me') return reply.code(404).send({ error: 'not found' });
+    const r = await doGetMe(req.user!.id);
+    return reply.code(r.status).send(r.body);
+  });
+
+  app.patch<{ Querystring: { op?: string }; Body: { displayName?: string; hasOnboarded?: boolean } }>(
+    '/api/auth',
+    { preHandler: requireAuth },
+    async (req, reply) => {
+      if ((req.query.op ?? '').toLowerCase() !== 'me') return reply.code(404).send({ error: 'not found' });
+      const r = await doPatchMe(req.user!.id, req.body ?? {});
+      return reply.code(r.status).send(r.body);
     },
   );
 }
