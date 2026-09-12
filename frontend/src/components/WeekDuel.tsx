@@ -223,7 +223,7 @@ export default function WeekDuel() {
         <div style={{ display: 'flex', gap: 20, alignItems: 'center', flexWrap: 'wrap' }}>
           <div style={{ flex: '1 1 320px', minWidth: 260 }}>
             <div className="panel-title" style={{ marginBottom: 6 }}>
-              <h3>Weekly duel — fresh account every day</h3>
+              <h3>Week backtest — last 5 sessions, replayed</h3>
             </div>
             <div style={{ display: 'flex', gap: 28, marginBottom: 8 }}>
               <div>
@@ -236,8 +236,9 @@ export default function WeekDuel() {
               </div>
             </div>
             <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.55 }}>
-              Each day starts fresh with <b>₹10,000</b> on NSE and <b>$1,000</b> on NYSE/NASDAQ, split across 5 methods.{' '}
-              <b>1% hard stop-loss, no take-profit.</b> Pick a day below to inspect every trade and its technical reason.
+              <b>Historical replay</b>, not live trading: each of the last 5 sessions is replayed with a fresh{' '}
+              <b>₹10,000</b> (NSE) and <b>$1,000</b> (NYSE/NASDAQ) account split across 5 methods.{' '}
+              <b>1% hard stop-loss, no take-profit.</b> For today&apos;s live positions, see the Live tab.
             </div>
           </div>
           <WeekSpark inCards={store.in} usCards={store.us} />

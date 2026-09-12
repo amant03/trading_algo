@@ -108,6 +108,8 @@ jobs:
             -o frontend/public/paper/daily.json || echo "no daily paper state yet"
           curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/paper/week.json \
             -o frontend/public/paper/week.json || echo "no weekly duel state yet"
+          curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/paper/live.json \
+            -o frontend/public/paper/live.json || echo "no live paper state yet"
 
       - name: Paper live-stop (market hours)
         if: env.MODE == 'news'
@@ -125,6 +127,14 @@ jobs:
       - name: Weekly Duel paper trade (market hours)
         if: env.MODE == 'news'
         run: node node_modules/tsx/dist/cli.mjs scripts/ci/paper-week.ts
+
+      # Live paper trading (market hours): today's session only, positions
+      # held open and marked to the latest bar → paper/live.json.
+      - name: Live paper trade (market hours)
+        if: env.MODE == 'news'
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/paper-week.ts
+        env:
+          PAPER_WEEK_LIVE: '1'
 
       # ---- full pipeline (once a day + manual) ----------------------------
       - name: Apply database schema
@@ -254,6 +264,8 @@ jobs:
             -o frontend/public/paper/daily.json || echo "no previous daily paper state — first seed run"
           curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/paper/week.json \
             -o frontend/public/paper/week.json || echo "no previous weekly duel state — first seed run"
+          curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/paper/live.json \
+            -o frontend/public/paper/live.json || echo "no previous live paper state — first seed run"
 
       # Paper trading: 5 classic strategies on a ₹1,00,000 virtual account,
       # advanced one trading day per run (see scripts/ci/paper.ts).
@@ -274,6 +286,14 @@ jobs:
       - name: Weekly Duel paper trade
         if: env.MODE == 'full'
         run: node node_modules/tsx/dist/cli.mjs scripts/ci/paper-week.ts
+
+      # Live paper trading: today's session only, open positions kept and
+      # marked to the latest bar → paper/live.json.
+      - name: Live paper trade
+        if: env.MODE == 'full'
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/paper-week.ts
+        env:
+          PAPER_WEEK_LIVE: '1'
 
       - name: Job summary
         if: always()

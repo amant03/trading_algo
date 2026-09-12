@@ -1,5 +1,12 @@
 // Weekly Duel — paper trading for BOTH markets, one fresh account per day.
 //
+// Two modes in one script (Yahoo Finance 5-min bars, free, no DB):
+//   * BACKTEST (default): replays the last 5 sessions per market and writes
+//     frontend/public/paper/week.json — historical replay, NOT live trading.
+//   * LIVE (PAPER_WEEK_LIVE=1): replays only the most recent session keeping
+//     positions open past the last fetched bar, and writes
+//     frontend/public/paper/live.json — today's live paper account.
+//
 // Every trading day starts with FRESH virtual money:
 //   * India (NSE): ₹10,000  (₹2,000 per strategy bucket)
 //   * USA (NYSE/NASDAQ): $1,000  ($200 per strategy bucket)
@@ -103,6 +110,8 @@ const STRATEGIES = [
 const STRAT_META = new Map(STRATEGIES.map((s) => [s.id, s]));
 
 const FILE = join(process.cwd(), 'frontend', 'public', 'paper', 'week.json');
+const LIVE_FILE = join(process.cwd(), 'frontend', 'public', 'paper', 'live.json');
+const LIVE_MODE = process.env.PAPER_WEEK_LIVE === '1';
 
 // ---- types ------------------------------------------------------------------
 
@@ -143,6 +152,10 @@ interface DayCard {
   trades: Trade[];
   status: 'open' | 'closed' | 'holiday';
   bars: number;
+  // Live-only fields (populated when keepOpen is set): positions still held,
+  // marked to the latest fetched bar, plus the unrealised slice of dayPnl.
+  unrealizedPnl: number;
+  openPositions: OpenPos[];
 }
 
 interface WeekStore {
@@ -157,6 +170,14 @@ interface WeekStore {
   };
   in: DayCard[];
   us: DayCard[];
+}
+
+// Live account snapshot: today's card per market with open positions exposed
+// as `open` for the UI contract.
+interface LiveStore {
+  ts: string;
+  in: (Omit<DayCard, 'openPositions'> & { open: OpenPos[] }) | null;
+  us: (Omit<DayCard, 'openPositions'> & { open: OpenPos[] }) | null;
 }
 
 // ---- tz helpers --------------------------------------------------------------
@@ -344,10 +365,23 @@ interface Pos {
   entryReason: string;
 }
 
+interface OpenPos {
+  strategy: string;
+  symbol: string;
+  qty: number;
+  entryPrice: number;
+  lastPrice: number;
+  unrealized: number;
+  unrealizedPct: number;
+  entryTime: string;
+  entryReason: string;
+}
+
 function replayDay(
   m: MarketCfg,
   date: string,
   series: Map<string, Bar[]>, // symbol -> full 5d series (for warmup)
+  keepOpen = false, // live mode: hold positions past the last fetched bar
 ): DayCard {
   const alloc = m.capital / STRATEGIES.length;
   const buckets: Record<string, { cash: number; realized: number; wins: number; losses: number }> = Object.fromEntries(
@@ -371,6 +405,11 @@ function replayDay(
 
   const maxBars = Math.max(...[...today.values()].map((b) => b.length), 0);
   const withWarm = (sym: string, i: number): Bar[] => [...(warm.get(sym) ?? []), ...today.get(sym)!.slice(0, i + 1)];
+
+  // Live session? Only then may positions survive past the last fetched bar.
+  // A finished session (or any backtest day) always squares off at the close.
+  const sessionLive =
+    keepOpen && dayOf(Date.now(), m.tz) === date && minutesOf(Date.now(), m.tz) < m.session[1];
 
   const r2 = (n: number): number => Math.round(n * 100) / 100;
 
@@ -417,7 +456,7 @@ function replayDay(
           exitPrice = bar.c;
           exitClass = 'signal-exit';
           reason = `Bearish exit — ${sig.why}`;
-        } else if (i === symBars!.length - 1) {
+        } else if (!sessionLive && i === symBars!.length - 1) {
           exitPrice = bar.c;
           exitClass = 'eod';
           reason = 'EOD square-off: intraday only, no overnight holding';
@@ -455,15 +494,22 @@ function replayDay(
     }
   }
 
-  // Force-close leftovers at the last bar (EOD discipline).
+  // Force-close leftovers at the last bar (EOD discipline) — skipped while a
+  // live session is still trading so positions stay open.
   for (const strat of STRATEGIES) {
     const pos = positions.get(strat.id);
     if (!pos) continue;
     const symBars = today.get(pos.symbol);
     const lastBar = symBars?.[symBars.length - 1];
     const full = symBars ? [...(warm.get(pos.symbol) ?? []), ...symBars] : [];
+    const exitPrice = lastBar ? lastBar.c : pos.entryPrice;
+    // In live mode a still-trading session keeps the position; a finished
+    // session (or backtest) always squares off.
+    if (sessionLive) {
+      continue;
+    }
     closePosition(
-      strat.id, pos, lastBar ? lastBar.c : pos.entryPrice, 'eod',
+      strat.id, pos, exitPrice, 'eod',
       lastBar ? 'EOD square-off (post-replay finalise)' : 'EOD square-off (no further bar data)',
       techSnapshot(full), lastBar ? timeOf(lastBar.ts, m.tz) : '--:--',
     );
@@ -472,8 +518,33 @@ function replayDay(
   const realized = Object.values(buckets).reduce((a, b) => a + b.realized, 0);
   const wins = Object.values(buckets).reduce((a, b) => a + b.wins, 0);
   const losses = Object.values(buckets).reduce((a, b) => a + b.losses, 0);
-  const equity = cash;
+
+  // Live mark-to-market on whatever is still held.
+  const openPositions: OpenPos[] = [];
+  for (const [strat, pos] of positions) {
+    const symBars = today.get(pos.symbol);
+    const lastBar = symBars?.[symBars.length - 1];
+    const lastPrice = lastBar ? lastBar.c : pos.entryPrice;
+    const unrealized = pos.qty * lastPrice * (1 - SLIPPAGE) - pos.qty * pos.entryPrice;
+    openPositions.push({
+      strategy: strat,
+      symbol: pos.symbol,
+      qty: pos.qty,
+      entryPrice: r2(pos.entryPrice),
+      lastPrice: r2(lastPrice),
+      unrealized: r2(unrealized),
+      unrealizedPct: r2((lastPrice / pos.entryPrice - 1) * 100),
+      entryTime: pos.entryTime,
+      entryReason: pos.entryReason,
+    });
+  }
+  const mtm = openPositions.reduce((a, p) => a + p.qty * p.lastPrice * (1 - SLIPPAGE), 0);
+  const equity = cash + mtm;
   const dayPnl = equity - m.capital;
+  const unrealizedPnl = equity - m.capital - realized;
+
+  // Newest-first ledger: descending by bar time, exits before entries on ties.
+  trades.sort((a, b) => (b.time < a.time ? -1 : b.time > a.time ? 1 : a.side === b.side ? 0 : a.side === 'SELL' ? -1 : 1));
   const firstTs = [...today.values()].flatMap((b) => (b[0] ? [b[0].ts] : []))[0];
 
   // Is this session still live? Compare "now" in market tz against session close.
@@ -496,6 +567,8 @@ function replayDay(
     trades,
     status,
     bars: [...today.values()].reduce((a, b) => a + b.length, 0),
+    unrealizedPnl: r2(unrealizedPnl),
+    openPositions,
   };
 }
 
@@ -515,6 +588,7 @@ async function main(): Promise<void> {
     in: [],
     us: [],
   };
+  const liveStore: LiveStore = { ts: '', in: null, us: null };
 
   for (const m of MARKETS) {
     let cursor = 0;
@@ -559,11 +633,31 @@ async function main(): Promise<void> {
         `sessions ${dates.join(', ') || 'none'} · week P&L ${tot >= 0 ? '+' : ''}${sym}${tot.toFixed(0)} · ` +
         `${cards.reduce((a, c) => a + c.trades.filter((t) => t.side === 'SELL').length, 0)} round trips`,
     );
+
+    // Live mode: also replay the most recent session keeping positions open,
+    // so the UI can show the current/live paper account for this market.
+    if (LIVE_MODE && dates.length) {
+      const liveDate = dates[dates.length - 1];
+      const live = replayDay(m, liveDate, series, true);
+      const { openPositions, ...rest } = live;
+      liveStore[m.key] = { ...rest, open: openPositions };
+      console.log(
+        `paper-live [${m.key}]: ${liveDate} ${live.status} · dayPnl ${live.dayPnl >= 0 ? '+' : ''}${sym}${live.dayPnl.toFixed(2)} ` +
+          `(${live.realizedPnl >= 0 ? '+' : ''}${sym}${live.realizedPnl.toFixed(2)} realised, ` +
+          `${live.unrealizedPnl >= 0 ? '+' : ''}${sym}${live.unrealizedPnl.toFixed(2)} open) · ` +
+          `${live.openPositions.length} open · ${live.trades.length} trades`,
+      );
+    }
   }
 
   mkdirSync(join(process.cwd(), 'frontend', 'public', 'paper'), { recursive: true });
   writeFileSync(FILE, JSON.stringify(store));
   console.log(`paper-week: wrote ${FILE}`);
+  if (LIVE_MODE) {
+    liveStore.ts = new Date().toISOString();
+    writeFileSync(LIVE_FILE, JSON.stringify(liveStore));
+    console.log(`paper-live: wrote ${LIVE_FILE}`);
+  }
 }
 
 main().catch((e) => {
