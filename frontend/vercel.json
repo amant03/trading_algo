@@ -7,6 +7,11 @@
     { "source": "/analysis.json", "destination": "/analysis.json" },
     { "source": "/news.json", "destination": "/news.json" },
     { "source": "/dependencies.json", "destination": "/dependencies.json" },
+    { "source": "/api/auth/:path*", "destination": "/api/auth?op=:path*" },
+    { "source": "/api/portfolio/reset", "destination": "/api/trade?op=reset" },
+    { "source": "/api/portfolio", "destination": "/api/trade?op=portfolio" },
+    { "source": "/api/orders", "destination": "/api/trade?op=orders" },
+    { "source": "/api/trades", "destination": "/api/trade?op=trades" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ],
   "functions": {
@@ -16,16 +21,9 @@
     "api/news.ts": { "maxDuration": 15 },
     "api/funda.ts": { "maxDuration": 30 },
     "api/import.ts": { "maxDuration": 15 },
-    "api/auth/signup.ts": { "maxDuration": 30 },
-    "api/auth/login.ts": { "maxDuration": 30 },
-    "api/auth/logout.ts": { "maxDuration": 10 },
-    "api/auth/me.ts": { "maxDuration": 15 },
-    "api/portfolio.ts": { "maxDuration": 30 },
-    "api/portfolio/reset.ts": { "maxDuration": 15 },
-    "api/orders.ts": { "maxDuration": 30 },
-    "api/trades.ts": { "maxDuration": 15 },
+    "api/auth.ts": { "maxDuration": 30 },
+    "api/trade.ts": { "maxDuration": 30 },
     "api/watchlist.ts": { "maxDuration": 15 },
-    "api/watchlist/[symbol].ts": { "maxDuration": 15 },
     "api/instruments.ts": { "maxDuration": 15 }
   },
   "headers": [

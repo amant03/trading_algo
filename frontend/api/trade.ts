@@ -1,9 +1,18 @@
-// TradeAlgo serverless account API — GET /api/orders (list) + POST /api/orders
-// (place). MARKET orders fill immediately at the live quote with 0.05%
-// adverse slippage; marketable LIMITs fill at once, resting LIMITs stay
-// PENDING and are settled on every portfolio/orders read. Long-only, max 15
-// distinct symbols. Self-contained (see api/auth/signup.ts header note).
-import { createHmac, timingSafeEqual } from 'node:crypto';
+// TradeAlgo serverless account API — all trading routes in ONE function
+// (Vercel Hobby caps 12 functions per deployment).
+// Routes (via vercel.json rewrites, frontend paths unchanged):
+//   GET  /api/portfolio        -> ?op=portfolio   (valued at live quotes;
+//                                                 crossed LIMITs settle here)
+//   POST /api/portfolio/reset  -> ?op=reset       (fresh Rs 1,00,000 start)
+//   GET  /api/orders           -> ?op=orders      (settles crossed LIMITs too)
+//   POST /api/orders           -> ?op=orders      {symbol,side,orderType?,quantity,limitPrice?}
+//   GET  /api/trades           -> ?op=trades
+// MARKET orders fill immediately at the live quote with 0.05% adverse
+// slippage; marketable LIMITs fill at once, resting LIMITs stay PENDING.
+// Long-only, max 15 distinct symbols, per-user Redis lock around mutations.
+// Self-contained (see api/auth.ts header note). WebCrypto only — no node:
+// imports, so this typechecks under the browser tsconfig.
+declare const process: { env: Record<string, string | undefined> };
 
 const UPSTASH_URL = (process.env.UPSTASH_REDIS_REST_URL ?? '').replace(/\/+$/, '');
 const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN ?? '';
@@ -33,9 +42,6 @@ function err(message: string, status: number): Response {
 function notConfigured(): Response {
   return err('account service is not configured yet — the store credentials are missing', 503);
 }
-function ipOf(req: Request): string {
-  return (req.headers.get('x-forwarded-for') ?? 'unknown').split(',')[0].trim().slice(0, 64);
-}
 async function rdb<T>(cmd: Array<string | number>): Promise<T | null> {
   const res = await fetch(`${UPSTASH_URL}/pipeline`, {
     method: 'POST',
@@ -59,34 +65,26 @@ async function rget<T>(key: string): Promise<T | null> {
 async function rset(key: string, value: unknown): Promise<void> {
   await rdb(['SET', key, JSON.stringify(value)]);
 }
-async function throttle(key: string, limit: number, windowSec: number): Promise<boolean> {
-  try {
-    const n = await rdb<number>(['INCR', key]);
-    if (n === 1) await rdb(['EXPIRE', key, windowSec]);
-    return (n ?? 0) <= limit;
-  } catch {
-    return true;
-  }
+function unb64url(s: string): Uint8Array {
+  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'));
+  const a = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
+  return a;
 }
-function b64url(input: string | Buffer): string {
-  return Buffer.from(input as never)
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
-}
-function authClaim(req: Request): { id: number; email: string } | null {
+async function authClaim(req: Request): Promise<{ id: number; email: string } | null> {
   try {
     const h = req.headers.get('authorization') ?? '';
     if (!h.startsWith('Bearer ')) return null;
     const parts = h.slice('Bearer '.length).trim().split('.');
     if (parts.length !== 3) return null;
     const [hh, p, s] = parts;
-    const expected = b64url(createHmac('sha256', JWT_SECRET).update(`${hh}.${p}`).digest());
-    const a = Buffer.from(s);
-    const b = Buffer.from(expected);
-    if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
-    const claims = JSON.parse(Buffer.from(p, 'base64').toString('utf8')) as { sub: number; email: string; exp: number };
+    const key = await crypto.subtle.importKey(
+      'raw', new TextEncoder().encode(JWT_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify'],
+    );
+    const ok = await crypto.subtle.verify('HMAC', key, unb64url(s) as BufferSource, new TextEncoder().encode(`${hh}.${p}`));
+    if (!ok) return null;
+    const bin = atob(p.replace(/-/g, '+').replace(/_/g, '/'));
+    const claims = JSON.parse(bin) as { sub: number; email: string; exp: number };
     if (typeof claims.sub !== 'number' || typeof claims.exp !== 'number') return null;
     if (claims.exp * 1000 < Date.now()) return null;
     return { id: claims.sub, email: claims.email };
@@ -159,9 +157,17 @@ async function quoteOf(symbol: string): Promise<{ price: number; prev: number } 
   }
   return null;
 }
+async function quotesFor(symbols: string[]): Promise<Map<string, { price: number; prev: number }>> {
+  const out = new Map<string, { price: number; prev: number }>();
+  await Promise.all(symbols.map(async (s) => {
+    const q = await quoteOf(s);
+    if (q) out.set(s, q);
+  }));
+  return out;
+}
 
 let uniCache: { at: number; bySym: Map<string, string> } | null = null;
-async function symbolKnown(sym: string): Promise<boolean> {
+async function symbolName(sym: string): Promise<string> {
   const up = sym.toUpperCase();
   const now = Date.now();
   if (!uniCache || now - uniCache.at > 10 * 60_000) {
@@ -175,8 +181,12 @@ async function symbolKnown(sym: string): Promise<boolean> {
       }
     } catch { /* keep stale/empty */ }
   }
+  return uniCache?.bySym.get(up) ?? up;
+}
+async function symbolKnown(sym: string): Promise<boolean> {
+  await symbolName(sym);
   if (!uniCache) return true;
-  return uniCache.bySym.has(up);
+  return uniCache.bySym.has(sym.toUpperCase());
 }
 
 function fillOne(b: Book, order: OrderState, fillPx: number): void {
@@ -253,38 +263,61 @@ async function settleLimits(b: Book): Promise<boolean> {
   return changed;
 }
 
-export async function OPTIONS(): Promise<Response> {
-  return new Response(null, {
-    status: 204,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    },
+async function buildPortfolio(uid: number): Promise<object> {
+  const b = await loadBook(uid);
+  if (await settleLimits(b)) await pushEquityPoint(uid, b);
+  else await saveBook(uid, b);
+  const heldSyms = [...new Set(b.positions.map((p) => p.symbol))];
+  const marks = await quotesFor(heldSyms);
+  const names = new Map<string, string>();
+  await Promise.all(heldSyms.map(async (s) => names.set(s, await symbolName(s))));
+  const positions = b.positions.map((p) => {
+    const q = marks.get(p.symbol);
+    const last = q?.price ?? p.avg;
+    const prev = q?.prev ?? last;
+    const mv = round2(p.qty * last);
+    const upnl = round2((last - p.avg) * p.qty);
+    return {
+      instrumentId: symId(p.symbol),
+      symbol: p.symbol,
+      name: names.get(p.symbol) ?? null,
+      sector: null,
+      quantity: p.qty,
+      avgPrice: p.avg,
+      lastPrice: round2(last),
+      marketValue: mv,
+      unrealizedPnl: upnl,
+      unrealizedPnlPct: p.avg > 0 ? round2(((last - p.avg) / p.avg) * 100) : 0,
+      realizedPnl: p.realized,
+      dayPnl: round2((last - prev) * p.qty),
+    };
   });
+  const equity = round2(b.acct.cash + positions.reduce((s, p) => s + p.marketValue, 0));
+  b.acct.equity = equity;
+  await saveBook(uid, b);
+  const initial = b.acct.initial > 0 ? b.acct.initial : STARTING_CASH;
+  const unrealized = round2(positions.reduce((s, p) => s + p.unrealizedPnl, 0));
+  const realized = round2(positions.reduce((s, p) => s + p.realizedPnl, 0));
+  const day = round2(positions.reduce((s, p) => s + p.dayPnl, 0));
+  const invested = round2(positions.reduce((s, p) => s + p.marketValue, 0));
+  const totalPnl = round2(equity - initial);
+  return {
+    account: { id: uid, cash: b.acct.cash, initialCapital: initial, equity },
+    summary: {
+      invested,
+      unrealizedPnl: unrealized,
+      realizedPnl: realized,
+      dayPnl: day,
+      totalPnl,
+      totalPnlPct: round2((totalPnl / initial) * 100),
+      availableCash: b.acct.cash,
+    },
+    positions,
+    equityCurve: b.equity.slice(-500),
+  };
 }
 
-export async function GET(request: Request): Promise<Response> {
-  if (!storeReady()) return notConfigured();
-  const claim = authClaim(request);
-  if (!claim) return err('authentication required', 401);
-  try {
-    const url = new URL(request.url);
-    const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? 50), 1), 200);
-    const b = await loadBook(claim.id);
-    if (await settleLimits(b)) await pushEquityPoint(claim.id, b);
-    else await saveBook(claim.id, b);
-    return json(b.orders.slice(0, limit));
-  } catch {
-    return err('request failed — please try again', 500);
-  }
-}
-
-export async function POST(request: Request): Promise<Response> {
-  if (!storeReady()) return notConfigured();
-  const claim = authClaim(request);
-  if (!claim) return err('authentication required', 401);
-  if (!(await throttle(`ta:rl:order:${claim.id}`, 60, 60))) return err('too many orders — slow down a little', 429);
+async function handlePlaceOrder(uid: number, request: Request): Promise<Response> {
   let body: { symbol?: string; side?: string; orderType?: string; quantity?: number; limitPrice?: number };
   try {
     body = (await request.json()) as typeof body;
@@ -307,13 +340,13 @@ export async function POST(request: Request): Promise<Response> {
   } catch {
     return err('request failed — please try again', 500);
   }
-  if (!(await acquireLock(claim.id))) return err('your portfolio is busy — retry in a few seconds', 429);
+  if (!(await acquireLock(uid))) return err('your portfolio is busy — retry in a few seconds', 429);
   try {
-    const b = await loadBook(claim.id);
+    const b = await loadBook(uid);
     const now = Date.now();
     const order: OrderState = {
       id: b.orders.reduce((m, o) => Math.max(m, o.id), 0) + 1,
-      accountId: claim.id, instrumentId: symId(symbol), symbol,
+      accountId: uid, instrumentId: symId(symbol), symbol,
       side: side as 'BUY' | 'SELL', orderType: orderType as 'MARKET' | 'LIMIT',
       quantity: qty, limitPrice: orderType === 'LIMIT' ? Number(body.limitPrice) : null,
       status: 'PENDING', filledQty: 0, avgPrice: null, strategy: null,
@@ -325,7 +358,7 @@ export async function POST(request: Request): Promise<Response> {
       (q != null && (side === 'BUY' ? (order.limitPrice as number) >= q.price : (order.limitPrice as number) <= q.price));
     if (marketable) {
       if (!q) {
-        await releaseLock(claim.id);
+        await releaseLock(uid);
         return err('live price unavailable right now — try again in a few seconds', 503);
       }
       const fillPx = orderType === 'MARKET'
@@ -338,15 +371,15 @@ export async function POST(request: Request): Promise<Response> {
         if (!heldSyms.has(symbol) && heldSyms.size >= MAX_POSITIONS) {
           order.status = 'REJECTED';
           b.orders.unshift(order);
-          await saveBook(claim.id, b);
-          await releaseLock(claim.id);
+          await saveBook(uid, b);
+          await releaseLock(uid);
           return err(`rejected: you already hold the maximum of ${MAX_POSITIONS} positions — sell something first`, 400);
         }
         if (b.acct.cash < fillPx * qty) {
           order.status = 'REJECTED';
           b.orders.unshift(order);
-          await saveBook(claim.id, b);
-          await releaseLock(claim.id);
+          await saveBook(uid, b);
+          await releaseLock(uid);
           return err(`rejected: this costs about ₹${Math.round(fillPx * qty).toLocaleString('en-IN')} but you have ₹${Math.round(b.acct.cash).toLocaleString('en-IN')} cash`, 400);
         }
       } else {
@@ -354,23 +387,86 @@ export async function POST(request: Request): Promise<Response> {
         if (!p || p.qty < qty) {
           order.status = 'REJECTED';
           b.orders.unshift(order);
-          await saveBook(claim.id, b);
-          await releaseLock(claim.id);
+          await saveBook(uid, b);
+          await releaseLock(uid);
           return err(`rejected: you hold ${p?.qty ?? 0} ${symbol} — short selling is not allowed in paper trading`, 400);
         }
       }
       fillOne(b, order, fillPx);
       b.orders.unshift(order);
-      await pushEquityPoint(claim.id, b);
-      await releaseLock(claim.id);
+      await pushEquityPoint(uid, b);
+      await releaseLock(uid);
       return json(order, 201);
     }
     b.orders.unshift(order);
-    await saveBook(claim.id, b);
-    await releaseLock(claim.id);
+    await saveBook(uid, b);
+    await releaseLock(uid);
     return json(order, 201);
   } catch {
-    await releaseLock(claim.id);
+    await releaseLock(uid);
+    return err('request failed — please try again', 500);
+  }
+}
+
+function opOf(request: Request): string {
+  const url = new URL(request.url);
+  const byQuery = (url.searchParams.get('op') ?? '').toLowerCase();
+  if (byQuery) return byQuery;
+  const m = url.pathname.match(/\/api\/(portfolio|orders|trades)(?:\/([^\/?#]+))?/i);
+  if (!m) return '';
+  if (m[1].toLowerCase() === 'portfolio' && (m[2] ?? '').toLowerCase() === 'reset') return 'reset';
+  return m[1].toLowerCase();
+}
+
+export async function OPTIONS(): Promise<Response> {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    },
+  });
+}
+
+export async function GET(request: Request): Promise<Response> {
+  if (!storeReady()) return notConfigured();
+  const claim = await authClaim(request);
+  if (!claim) return err('authentication required', 401);
+  const op = opOf(request);
+  try {
+    if (op === 'portfolio') return json(await buildPortfolio(claim.id));
+    if (op === 'orders' || op === 'trades') {
+      const url = new URL(request.url);
+      const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? 50), 1), 200);
+      const b = await loadBook(claim.id);
+      if (op === 'orders' && (await settleLimits(b))) await pushEquityPoint(claim.id, b);
+      else await saveBook(claim.id, b);
+      return json((op === 'orders' ? b.orders : b.trades).slice(0, limit));
+    }
+    return err('not found', 404);
+  } catch {
+    return err('request failed — please try again', 500);
+  }
+}
+
+export async function POST(request: Request): Promise<Response> {
+  if (!storeReady()) return notConfigured();
+  const claim = await authClaim(request);
+  if (!claim) return err('authentication required', 401);
+  const op = opOf(request);
+  try {
+    if (op === 'orders') return handlePlaceOrder(claim.id, request);
+    if (op === 'reset') {
+      await rset(`ta:acct:${claim.id}`, { cash: STARTING_CASH, initial: STARTING_CASH, equity: STARTING_CASH });
+      await rset(`ta:pos:${claim.id}`, []);
+      await rset(`ta:ord:${claim.id}`, []);
+      await rset(`ta:trd:${claim.id}`, []);
+      await rset(`ta:eq:${claim.id}`, []);
+      return json({ ok: true, cash: STARTING_CASH });
+    }
+    return err('not found', 404);
+  } catch {
     return err('request failed — please try again', 500);
   }
 }
