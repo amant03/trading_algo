@@ -56,33 +56,37 @@ const TVMAP_URLS = [
   '/tv-map.json',
 ];
 interface TvMapFile { universe: number; resolved: number; map: Record<string, string> }
-interface RankRow {
-  s: string; n: string; tv: string; c: number; ch: number | null;
-  vol: number | null; rsi: number | null; sc: number; lb: string; lq: boolean;
+// Live "Most attractive now" rows from /api/attractive (TradingView scanner,
+// scored 0–100 server-side). Replaces the old static tv-rank.json feed.
+interface AttractiveRow {
+  symbol: string; name: string; price: number | null; changePct: number | null;
+  weekPct: number | null; volume: number | null; relVol: number | null;
+  marketCap: number | null; marketCapDisplay: string; capBucket: string | null;
+  pe: number | null; sector: string; exchange: string; rsi: number | null;
+  rating: number | null; score: number; reasons: string[];
 }
-interface RankFile { asOf: string; count: number; liquid: number; rows: RankRow[] }
-const TVRANK_URLS = [
-  'https://cdn.jsdelivr.net/gh/amant03/trading_algo@automation-data/frontend/public/tv-rank.json',
-  'https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/tv-rank.json',
-  'https://raw.githubusercontent.com/amant03/trading_algo/main/frontend/public/tv-rank.json',
-  '/tv-rank.json',
-];
-let tvRankCache: RankFile | null = null;
-async function loadTvRank(): Promise<RankFile | null> {
-  if (tvRankCache) return tvRankCache;
-  for (const url of TVRANK_URLS) {
-    try {
-      const res = await fetch(url, { cache: 'no-store' });
-      if (!res.ok) continue;
-      const j = (await res.json()) as RankFile;
-      if (Array.isArray(j?.rows)) {
-        tvRankCache = j;
-        return j;
-      }
-    } catch { /* try next */ }
-  }
-  return null;
+interface AttractiveResp {
+  ts: number; source: string; market: string; currency: string;
+  total: number; count: number;
+  sectors: { name: string; count: number }[];
+  rows: AttractiveRow[];
 }
+type RankMarket = 'in' | 'us';
+const CAP_OPTS: Record<RankMarket, { id: string; label: string }[]> = {
+  in: [
+    { id: '', label: 'All caps' },
+    { id: 'large', label: 'Large (₹1L cr+)' },
+    { id: 'mid', label: 'Mid (₹25k cr+)' },
+    { id: 'small', label: 'Small' },
+  ],
+  us: [
+    { id: '', label: 'All caps' },
+    { id: 'mega', label: 'Mega ($200B+)' },
+    { id: 'large', label: 'Large ($10B+)' },
+    { id: 'mid', label: 'Mid ($2B+)' },
+    { id: 'small', label: 'Small' },
+  ],
+};
 let tvMapCache: TvMapFile | null = null;
 async function loadTvMap(): Promise<TvMapFile | null> {
   if (tvMapCache) return tvMapCache;
@@ -101,6 +105,7 @@ async function loadTvMap(): Promise<TvMapFile | null> {
 }
 function resolveTv(symbol: string, map: Record<string, string>): string {
   const clean = symbol.trim().toUpperCase();
+  if (/^[A-Z]+:[A-Z0-9&.\-_]{1,20}$/.test(clean)) return clean; // already exchange-qualified
   if (/^(NSE|BSE):/.test(clean)) return clean;
   return map[clean] ?? `NSE:${clean}`;
 }
@@ -161,11 +166,16 @@ export default function Test() {
   const [qty, setQty] = useState('1');
   const [msg, setMsg] = useState<string | null>(null);
   const [wallet, setWallet] = useState<TestWallet>(loadWallet);
-  const [rankRows, setRankRows] = useState<RankRow[]>([]);
-  const [rankAsOf, setRankAsOf] = useState<string | null>(null);
-  const [liquidOnly, setLiquidOnly] = useState(true);
+  const [rankRows, setRankRows] = useState<AttractiveRow[]>([]);
+  const [rankSectors, setRankSectors] = useState<{ name: string; count: number }[]>([]);
+  const [rankAsOf, setRankAsOf] = useState<number | null>(null);
+  const [rankMarket, setRankMarket] = useState<RankMarket>('in');
+  const [rankSector, setRankSector] = useState('');
+  const [rankCap, setRankCap] = useState('');
   const [rankFilter, setRankFilter] = useState('');
   const [rankShown, setRankShown] = useState(50);
+  const [rankLoading, setRankLoading] = useState(false);
+  const [rankError, setRankError] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -184,25 +194,38 @@ export default function Test() {
   }, []);
 
   const tvTicker = useMemo(() => resolveTv(symbol, tvMap), [symbol, tvMap]);
+  const labCur = /^(NSE|BSE):/.test(tvTicker) ? '₹' : '$';
+  const labIndian = labCur === '₹';
+
+  const loadRank = useCallback(async (market: RankMarket, sector: string, cap: string) => {
+    setRankLoading(true);
+    setRankError(null);
+    try {
+      const qs = new URLSearchParams({ market, limit: '60' });
+      if (sector) qs.set('sector', sector);
+      if (cap) qs.set('cap', cap);
+      const r = await get<AttractiveResp>(`/api/attractive?${qs.toString()}`);
+      setRankRows(r.rows ?? []);
+      setRankSectors(r.sectors ?? []);
+      setRankAsOf(r.ts ?? Date.now());
+    } catch (e) {
+      setRankError(e instanceof Error ? e.message : 'Attractive scan failed.');
+    } finally {
+      setRankLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    let live = true;
-    loadTvRank().then((f) => {
-      if (!live || !f) return;
-      setRankRows(f.rows);
-      setRankAsOf(f.asOf);
-    });
-    return () => { live = false; };
-  }, []);
+    void loadRank(rankMarket, rankSector, rankCap);
+    const t = setInterval(() => loadRank(rankMarket, rankSector, rankCap), 60_000);
+    return () => clearInterval(t);
+  }, [loadRank, rankMarket, rankSector, rankCap]);
 
   const rankPool = useMemo(() => {
     const term = rankFilter.trim().toUpperCase();
-    return rankRows.filter((r) => {
-      if (liquidOnly && !r.lq) return false;
-      if (!term) return true;
-      return r.s.includes(term) || r.n.toUpperCase().includes(term);
-    });
-  }, [rankRows, liquidOnly, rankFilter]);
+    if (!term) return rankRows;
+    return rankRows.filter((r) => r.symbol.includes(term) || r.name.toUpperCase().includes(term));
+  }, [rankRows, rankFilter]);
 
   const suggestions = useMemo(() => {
     const term = symbol.trim().toUpperCase().replace(/\s+/g, '');
@@ -372,7 +395,7 @@ export default function Test() {
         <>
           <div className="panel reveal" style={{ marginBottom: 16 }}>
             <div className="panel-title">
-              <h3>{tv.tv} · ₹{fmt(tv.close)}</h3>
+              <h3>{tv.tv} · {labCur}{fmt(tv.close)}</h3>
               <span className={tv.changePct != null && tv.changePct < 0 ? 'down' : 'up'}>
                 {tv.changePct != null ? `${tv.changePct >= 0 ? '+' : ''}${tv.changePct.toFixed(2)}%` : '—'}
               </span>
@@ -406,11 +429,12 @@ export default function Test() {
             <div className="dep-geo" style={{ marginTop: 12 }}>
               <div>RSI(14): <b>{fmt(tv.rsi, 1)}</b> {tv.rsi != null && (tv.rsi > 70 ? '(overbought)' : tv.rsi < 30 ? '(oversold)' : '(neutral)')}
                 {' '}· MACD: <b>{fmt(tv.macd, 2)}</b> vs signal <b>{fmt(tv.macdSignal, 2)}</b></div>
-              <div>Price vs SMA20 <b>₹{fmt(tv.sma20)}</b> / SMA50 <b>₹{fmt(tv.sma50)}</b> / SMA200 <b>₹{fmt(tv.sma200)}</b>
+              <div>Price vs SMA20 <b>{labCur}{fmt(tv.sma20)}</b> / SMA50 <b>{labCur}{fmt(tv.sma50)}</b> / SMA200 <b>{labCur}{fmt(tv.sma200)}</b>
                 {' '}· Volume: <b>{fmtInt(tv.volume)}</b></div>
             </div>
           </div>
 
+          {labIndian ? (
           <div className="panel reveal reveal-1" style={{ marginBottom: 16 }}>
             <div className="panel-title"><h3>Paper trade @ ₹{fmt(tv.close)}</h3><span className="hint">simulated fill +0.05% slippage</span></div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -428,6 +452,17 @@ export default function Test() {
             </div>
             {msg && <p style={{ fontSize: 13, marginTop: 8 }}>{msg}</p>}
           </div>
+          ) : (
+          <div className="panel reveal reveal-1" style={{ marginBottom: 16 }}>
+            <div className="panel-title"><h3>Snapshot only — US symbol</h3></div>
+            <p className="muted" style={{ fontSize: 13, lineHeight: 1.6 }}>
+              The ₹ Test wallet only trades NSE/BSE listings. For US paper trading use the{' '}
+              <a href="#/us" style={{ color: 'var(--cyan)', textDecoration: 'none' }}>USA tab</a> (live screener) or{' '}
+              <a href="#/paper" style={{ color: 'var(--cyan)', textDecoration: 'none' }}>Paper Lab → Live / Week Backtest</a>{' '}
+              ($1,000 fresh daily, 1% stop).
+            </p>
+          </div>
+          )}
         </>
       )}
 
@@ -435,65 +470,104 @@ export default function Test() {
         <div className="panel-title">
           <h3>Most attractive now</h3>
           <span className="hint">
-            {rankAsOf ? `TV scan ${new Date(rankAsOf).toLocaleString('en-IN')}` : 'loading ranking…'}
-            {' '}· score = ½·1D rating + ¼·1W rating + ¼·1D trend ± RSI/ SMA50 nudge
+            {rankAsOf ? `live TV scan ${new Date(rankAsOf).toLocaleTimeString('en-IN')}` : 'scanning…'}
+            {' '}· score 0–100 = rating 35 + day 20 + week 10 + RSI 15 + volume 10 + value 10
           </span>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
-          <input
+          <button className={`btn ${rankMarket === 'in' ? 'primary' : ''}`} onClick={() => { setRankMarket('in'); setRankSector(''); setRankCap(''); setRankShown(50); }}>
+            India
+          </button>
+          <button className={`btn ${rankMarket === 'us' ? 'primary' : ''}`} onClick={() => { setRankMarket('us'); setRankSector(''); setRankCap(''); setRankShown(50); }}>
+            USA
+          </button>
+          <select
             className="input"
             style={{ maxWidth: 220 }}
+            value={rankSector}
+            onChange={(e) => { setRankSector(e.target.value); setRankShown(50); }}
+            title="Filter by sector"
+          >
+            <option value="">All sectors</option>
+            {rankSectors.map((s) => (
+              <option key={s.name} value={s.name}>{s.name} ({s.count})</option>
+            ))}
+          </select>
+          <select
+            className="input"
+            style={{ maxWidth: 180 }}
+            value={rankCap}
+            onChange={(e) => { setRankCap(e.target.value); setRankShown(50); }}
+            title="Filter by market capitalisation"
+          >
+            {CAP_OPTS[rankMarket].map((c) => (
+              <option key={c.id} value={c.id}>{c.label}</option>
+            ))}
+          </select>
+          <input
+            className="input"
+            style={{ maxWidth: 200 }}
             value={rankFilter}
             onChange={(e) => { setRankFilter(e.target.value); setRankShown(50); }}
-            placeholder={`Filter ${rankPool.length.toLocaleString('en-IN')} stocks…`}
+            placeholder={`Search ${rankPool.length} stocks…`}
           />
-          <button className={`btn ${liquidOnly ? 'primary' : ''}`} onClick={() => { setLiquidOnly(true); setRankShown(50); }}>
-            Liquid only
+          <button className="btn" onClick={() => loadRank(rankMarket, rankSector, rankCap)} disabled={rankLoading}>
+            {rankLoading ? 'Scanning…' : 'Refresh'}
           </button>
-          <button className={`btn ${!liquidOnly ? 'primary' : ''}`} onClick={() => { setLiquidOnly(false); setRankShown(50); }}>
-            Include illiquid
-          </button>
-          <span className="muted" style={{ fontSize: 12 }}>
-            {liquidOnly ? 'tradable only (₹10L+/day value)' : 'warning: tiny volumes can trap you'}
-          </span>
         </div>
-        {rankPool.length === 0 ? (
+        {rankError ? (
+          <div className="empty">{rankError} <button className="btn" style={{ marginLeft: 8 }} onClick={() => loadRank(rankMarket, rankSector, rankCap)}>Retry</button></div>
+        ) : rankPool.length === 0 ? (
           <div className="empty">
-            {rankRows.length === 0
-              ? 'Ranking list is on its way — it publishes with the next automation snapshot.'
-              : 'No stocks match that filter.'}
+            {rankLoading ? 'Scanning TradingView…' : 'No stocks match those filters — loosen the sector or cap filter.'}
           </div>
         ) : (
           <>
             <div className="table-wrap">
               <table className="s-table">
                 <thead>
-                  <tr><th>#</th><th>Symbol</th><th>Price</th><th>Day</th><th>Buyability</th><th>RSI</th></tr>
+                  <tr><th>#</th><th>Symbol</th><th>Price</th><th>Day</th><th>Score</th><th>RSI</th><th>Sector</th><th>Mkt Cap</th><th>Why attractive</th></tr>
                 </thead>
                 <tbody>
-                  {rankPool.slice(0, rankShown).map((r, i) => (
-                    <tr
-                      key={r.s}
-                      style={{ cursor: 'pointer' }}
-                      title={`Load ${r.s} into the lab above`}
-                      onClick={() => { setSymbol(r.s); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-                    >
-                      <td>{i + 1}</td>
-                      <td><b>{r.s}</b> <span className="muted">{r.n.length > 26 ? `${r.n.slice(0, 26)}…` : r.n}</span></td>
-                      <td>₹{fmt(r.c)}</td>
-                      <td className={r.ch != null && r.ch < 0 ? 'down' : 'up'}>
-                        {r.ch != null ? `${r.ch >= 0 ? '+' : ''}${r.ch.toFixed(1)}%` : '—'}
-                      </td>
-                      <td><ScoreBar v={r.sc} /> <span className={scoreLabel(r.sc).cls}>{r.lb}</span></td>
-                      <td>{r.rsi != null ? r.rsi.toFixed(0) : '—'}</td>
-                    </tr>
-                  ))}
+                  {rankPool.slice(0, rankShown).map((r, i) => {
+                    const cur = rankMarket === 'in' ? '₹' : '$';
+                    return (
+                      <tr
+                        key={`${r.exchange}:${r.symbol}`}
+                        style={{ cursor: 'pointer' }}
+                        title={rankMarket === 'in' ? `Load ${r.symbol} into the lab above` : `View ${r.symbol} snapshot above (US is view-only in this lab)`}
+                        onClick={() => {
+                          setSymbol(rankMarket === 'in' ? r.symbol : `${r.exchange}:${r.symbol}`);
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
+                      >
+                        <td>{i + 1}</td>
+                        <td><b>{r.symbol}</b> <span className="muted">{r.name.length > 24 ? `${r.name.slice(0, 24)}…` : r.name}</span></td>
+                        <td>{cur}{fmt(r.price)}</td>
+                        <td className={r.changePct != null && r.changePct < 0 ? 'down' : 'up'}>
+                          {r.changePct != null ? `${r.changePct >= 0 ? '+' : ''}${r.changePct.toFixed(1)}%` : '—'}
+                        </td>
+                        <td>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ display: 'inline-block', width: 56, height: 6, borderRadius: 3, background: 'rgba(148,163,184,0.15)', overflow: 'hidden' }}>
+                              <span style={{ display: 'block', height: '100%', width: `${Math.max(0, Math.min(100, r.score))}%`, background: r.score >= 60 ? 'var(--up)' : r.score >= 40 ? 'var(--amber, #ffb020)' : 'var(--down)', borderRadius: 3 }} />
+                            </span>
+                            <b>{r.score.toFixed(0)}</b>
+                          </span>
+                        </td>
+                        <td>{r.rsi != null ? r.rsi.toFixed(0) : '—'}</td>
+                        <td className="muted">{r.sector || '—'}</td>
+                        <td className="muted">{r.marketCapDisplay}</td>
+                        <td className="muted" style={{ fontSize: 12 }}>{r.reasons.join(' · ')}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
             {rankShown < rankPool.length && (
-              <button className="btn" style={{ marginTop: 10 }} onClick={() => setRankShown((n) => n + 100)}>
-                Show more ({(rankPool.length - rankShown).toLocaleString('en-IN')} left)
+              <button className="btn" style={{ marginTop: 10 }} onClick={() => setRankShown((n) => n + 50)}>
+                Show more ({rankPool.length - rankShown} left)
               </button>
             )}
           </>

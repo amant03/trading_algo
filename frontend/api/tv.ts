@@ -6,7 +6,8 @@
 // serverless, and its `ws` dep can't ship to browsers; that upgrade path
 // belongs on the self-hosted VM service, not this snapshot proxy).
 //
-// GET /api/tv?symbols=NSE:RELIANCE,NSE:TCS  (max 15, NSE:/BSE: only)
+// GET /api/tv?symbols=NSE:RELIANCE,NSE:TCS  (max 15)
+// Exchanges: NSE/BSE for India, NASDAQ/NYSE/AMEX for the US.
 // -> { asOf, symbols: [{ tv, close, changePct, volume, rsi, macd,
 //      macdSignal, sma20, sma50, sma200, ema20, bbUpper, bbLower,
 //      ta: { "1":{all,ma,other}, ..., "1D":{...}, "1W":{...}, "1M":{...} } }] }
@@ -17,7 +18,7 @@
 const SCAN_URL = 'https://scanner.tradingview.com/global/scan';
 const MAX_SYMBOLS = 15;
 const CACHE_MS = 60_000;
-const TV_RE = /^(NSE|BSE):[A-Z0-9&.\-_]{1,20}$/;
+const TV_RE = /^(NSE|BSE|NASDAQ|NYSE|AMEX):[A-Z0-9&.\-_]{1,20}$/;
 
 const SNAP_COLS = [
   'close', 'change', 'volume',
@@ -66,7 +67,7 @@ export async function GET(request: Request): Promise<Response> {
       return json({ error: 'symbols required, e.g. ?symbols=NSE:RELIANCE,NSE:TCS' }, 400);
     }
     for (const t of tickers) {
-      if (!TV_RE.test(t)) return json({ error: `bad symbol "${t}" — use NSE:XXXX or BSE:XXXX` }, 400);
+      if (!TV_RE.test(t)) return json({ error: `bad symbol "${t}" — use NSE:XXXX, BSE:XXXX, NASDAQ:XXXX, NYSE:XXXX or AMEX:XXXX` }, 400);
     }
     const key = tickers.join(',');
     const now = Date.now();
