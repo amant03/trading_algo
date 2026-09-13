@@ -15,8 +15,8 @@
     "api/search.ts": { "maxDuration": 15 },
     "api/news.ts": { "maxDuration": 15 },
     "api/funda.ts": { "maxDuration": 30 },
-    "api/us.ts": { "maxDuration": 30 },
-    "api/import.ts": { "maxDuration": 15 }
+    "api/import.ts": { "maxDuration": 15 },
+    "api/tv.ts": { "maxDuration": 30 }
   },
   "headers": [
     {

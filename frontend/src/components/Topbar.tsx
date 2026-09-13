@@ -12,6 +12,7 @@ const NAV = [
   { to: '/algorithms', label: 'Algorithms' },
   { to: '/paper', label: 'Paper Lab' },
   { to: '/watchlist', label: 'Watchlist' },
+  { to: '/test', label: 'Test' },
 ];
 
 const MODE_LABEL: Record<FeedMode, string> = {

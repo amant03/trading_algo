@@ -1422,6 +1422,18 @@ a.news-headline:hover { color: var(--cyan); }
 .dep-foot a { color: var(--cyan); text-decoration: none; }
 .dep-foot a:hover { text-decoration: underline; }
 
+/* ---- Test tab (TradingView paper lab) ---- */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 4px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.06);
+}
+
 /* ---- dependency v2 summary blocks ---- */
 .dep-block {
   display: flex;
