@@ -17,7 +17,7 @@
 const SCAN_URL = 'https://scanner.tradingview.com/global/scan';
 const MAX_SYMBOLS = 15;
 const CACHE_MS = 60_000;
-const TV_RE = /^(NSE|BSE):[A-Z0-9&.\-]{1,20}$/;
+const TV_RE = /^(NSE|BSE):[A-Z0-9&.\-_]{1,20}$/;
 
 const SNAP_COLS = [
   'close', 'change', 'volume',
