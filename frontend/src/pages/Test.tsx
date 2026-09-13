@@ -56,6 +56,33 @@ const TVMAP_URLS = [
   '/tv-map.json',
 ];
 interface TvMapFile { universe: number; resolved: number; map: Record<string, string> }
+interface RankRow {
+  s: string; n: string; tv: string; c: number; ch: number | null;
+  vol: number | null; rsi: number | null; sc: number; lb: string; lq: boolean;
+}
+interface RankFile { asOf: string; count: number; liquid: number; rows: RankRow[] }
+const TVRANK_URLS = [
+  'https://cdn.jsdelivr.net/gh/amant03/trading_algo@automation-data/frontend/public/tv-rank.json',
+  'https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/tv-rank.json',
+  'https://raw.githubusercontent.com/amant03/trading_algo/main/frontend/public/tv-rank.json',
+  '/tv-rank.json',
+];
+let tvRankCache: RankFile | null = null;
+async function loadTvRank(): Promise<RankFile | null> {
+  if (tvRankCache) return tvRankCache;
+  for (const url of TVRANK_URLS) {
+    try {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) continue;
+      const j = (await res.json()) as RankFile;
+      if (Array.isArray(j?.rows)) {
+        tvRankCache = j;
+        return j;
+      }
+    } catch { /* try next */ }
+  }
+  return null;
+}
 let tvMapCache: TvMapFile | null = null;
 async function loadTvMap(): Promise<TvMapFile | null> {
   if (tvMapCache) return tvMapCache;
@@ -110,6 +137,16 @@ function fmtInt(n: number | null): string {
   return Math.round(n).toLocaleString('en-IN');
 }
 
+function ScoreBar({ v }: { v: number | null }) {
+  if (v == null || !isFinite(v)) return <span className="muted">—</span>;
+  const pct = Math.max(0, Math.min(100, ((v + 1) / 2) * 100));
+  return (
+    <span className="scorebar" title={`score ${v.toFixed(3)} (−1 strong sell … +1 strong buy)`}>
+      <span className="scorebar-mark" style={{ left: `${pct}%` }} />
+    </span>
+  );
+}
+
 export default function Test() {
   const universe = useLive((s) => s.universe);
   const [symbol, setSymbol] = useState('RELIANCE');
@@ -124,6 +161,11 @@ export default function Test() {
   const [qty, setQty] = useState('1');
   const [msg, setMsg] = useState<string | null>(null);
   const [wallet, setWallet] = useState<TestWallet>(loadWallet);
+  const [rankRows, setRankRows] = useState<RankRow[]>([]);
+  const [rankAsOf, setRankAsOf] = useState<string | null>(null);
+  const [liquidOnly, setLiquidOnly] = useState(true);
+  const [rankFilter, setRankFilter] = useState('');
+  const [rankShown, setRankShown] = useState(50);
 
   useEffect(() => {
     try {
@@ -142,6 +184,25 @@ export default function Test() {
   }, []);
 
   const tvTicker = useMemo(() => resolveTv(symbol, tvMap), [symbol, tvMap]);
+
+  useEffect(() => {
+    let live = true;
+    loadTvRank().then((f) => {
+      if (!live || !f) return;
+      setRankRows(f.rows);
+      setRankAsOf(f.asOf);
+    });
+    return () => { live = false; };
+  }, []);
+
+  const rankPool = useMemo(() => {
+    const term = rankFilter.trim().toUpperCase();
+    return rankRows.filter((r) => {
+      if (liquidOnly && !r.lq) return false;
+      if (!term) return true;
+      return r.s.includes(term) || r.n.toUpperCase().includes(term);
+    });
+  }, [rankRows, liquidOnly, rankFilter]);
 
   const suggestions = useMemo(() => {
     const term = symbol.trim().toUpperCase().replace(/\s+/g, '');
@@ -277,7 +338,7 @@ export default function Test() {
               placeholder="Any of 5,138 stocks, e.g. RELIANCE"
             />
             {suggestOpen && suggestions.length > 0 && (
-              <div className="search-results">
+              <div className="search-results" style={{ maxHeight: 320, overflowY: 'auto' }}>
                 {suggestions.map((s) => (
                   <div key={s.symbol} className="search-item" onMouseDown={(e) => { e.preventDefault(); setSymbol(s.symbol); setSuggestOpen(false); }}>
                     <span className="sym">{s.symbol}</span>
@@ -325,6 +386,7 @@ export default function Test() {
                     {' '}({tv.ta?.['1D']?.all != null ? tv.ta['1D'].all.toFixed(2) : '—'})
                   </span>
                 </div>
+                <ScoreBar v={tv.ta?.['1D']?.all ?? null} />
               </div>
               <div className="muted" style={{ fontSize: 12 }}>
                 {asOf ? `Snapshot ${new Date(asOf).toLocaleTimeString('en-IN')}` : ''} · auto-refresh 60s
@@ -368,6 +430,75 @@ export default function Test() {
           </div>
         </>
       )}
+
+      <div className="panel reveal reveal-2" style={{ marginBottom: 16 }}>
+        <div className="panel-title">
+          <h3>Most attractive now</h3>
+          <span className="hint">
+            {rankAsOf ? `TV scan ${new Date(rankAsOf).toLocaleString('en-IN')}` : 'loading ranking…'}
+            {' '}· score = ½·1D rating + ¼·1W rating + ¼·1D trend ± RSI/ SMA50 nudge
+          </span>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
+          <input
+            className="input"
+            style={{ maxWidth: 220 }}
+            value={rankFilter}
+            onChange={(e) => { setRankFilter(e.target.value); setRankShown(50); }}
+            placeholder={`Filter ${rankPool.length.toLocaleString('en-IN')} stocks…`}
+          />
+          <button className={`btn ${liquidOnly ? 'primary' : ''}`} onClick={() => { setLiquidOnly(true); setRankShown(50); }}>
+            Liquid only
+          </button>
+          <button className={`btn ${!liquidOnly ? 'primary' : ''}`} onClick={() => { setLiquidOnly(false); setRankShown(50); }}>
+            Include illiquid
+          </button>
+          <span className="muted" style={{ fontSize: 12 }}>
+            {liquidOnly ? 'tradable only (₹10L+/day value)' : 'warning: tiny volumes can trap you'}
+          </span>
+        </div>
+        {rankPool.length === 0 ? (
+          <div className="empty">
+            {rankRows.length === 0
+              ? 'Ranking list is on its way — it publishes with the next automation snapshot.'
+              : 'No stocks match that filter.'}
+          </div>
+        ) : (
+          <>
+            <div className="table-wrap">
+              <table className="s-table">
+                <thead>
+                  <tr><th>#</th><th>Symbol</th><th>Price</th><th>Day</th><th>Buyability</th><th>RSI</th></tr>
+                </thead>
+                <tbody>
+                  {rankPool.slice(0, rankShown).map((r, i) => (
+                    <tr
+                      key={r.s}
+                      style={{ cursor: 'pointer' }}
+                      title={`Load ${r.s} into the lab above`}
+                      onClick={() => { setSymbol(r.s); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                    >
+                      <td>{i + 1}</td>
+                      <td><b>{r.s}</b> <span className="muted">{r.n.length > 26 ? `${r.n.slice(0, 26)}…` : r.n}</span></td>
+                      <td>₹{fmt(r.c)}</td>
+                      <td className={r.ch != null && r.ch < 0 ? 'down' : 'up'}>
+                        {r.ch != null ? `${r.ch >= 0 ? '+' : ''}${r.ch.toFixed(1)}%` : '—'}
+                      </td>
+                      <td><ScoreBar v={r.sc} /> <span className={scoreLabel(r.sc).cls}>{r.lb}</span></td>
+                      <td>{r.rsi != null ? r.rsi.toFixed(0) : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {rankShown < rankPool.length && (
+              <button className="btn" style={{ marginTop: 10 }} onClick={() => setRankShown((n) => n + 100)}>
+                Show more ({(rankPool.length - rankShown).toLocaleString('en-IN')} left)
+              </button>
+            )}
+          </>
+        )}
+      </div>
 
       <div className="panel reveal reveal-2">
         <div className="panel-title">

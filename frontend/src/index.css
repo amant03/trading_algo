@@ -1434,6 +1434,27 @@ a.news-headline:hover { color: var(--cyan); }
   background: rgba(148, 163, 184, 0.06);
 }
 
+/* ---- buyability score bar (Test tab) ---- */
+.scorebar {
+  position: relative;
+  display: inline-block;
+  width: 110px;
+  height: 8px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--down), rgba(148, 163, 184, 0.25) 50%, var(--up));
+  vertical-align: middle;
+  margin-right: 8px;
+}
+.scorebar-mark {
+  position: absolute;
+  top: -3px;
+  width: 2px;
+  height: 14px;
+  background: var(--text);
+  border-radius: 1px;
+  transform: translateX(-1px);
+}
+
 /* ---- dependency v2 summary blocks ---- */
 .dep-block {
   display: flex;
