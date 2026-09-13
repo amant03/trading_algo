@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { get } from '../api';
+import { useLive } from '../ws';
 
 // TradingView-powered paper trading lab. Quotes + technical ratings come from
 // the unofficial TradingView scanner endpoint via our /api/tv proxy (the same
@@ -46,6 +47,37 @@ const SLIP = 0.0005;
 const TFS = ['1', '5', '15', '60', '240', '1D', '1W', '1M'];
 const QUICK = ['RELIANCE', 'HDFCBANK', 'INFY', 'TCS', 'SBIN', 'ITC', 'LT', 'TATAMOTORS'];
 
+// Universe symbol -> TradingView ticker (scripts/ci/tv-map.ts). Covers
+// 99.7% of the 5,138-stock universe; unmapped symbols fall back to NSE:SYM.
+const TVMAP_URLS = [
+  'https://cdn.jsdelivr.net/gh/amant03/trading_algo@automation-data/frontend/public/tv-map.json',
+  'https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/tv-map.json',
+  'https://raw.githubusercontent.com/amant03/trading_algo/main/frontend/public/tv-map.json',
+  '/tv-map.json',
+];
+interface TvMapFile { universe: number; resolved: number; map: Record<string, string> }
+let tvMapCache: TvMapFile | null = null;
+async function loadTvMap(): Promise<TvMapFile | null> {
+  if (tvMapCache) return tvMapCache;
+  for (const url of TVMAP_URLS) {
+    try {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) continue;
+      const j = (await res.json()) as TvMapFile;
+      if (j?.map) {
+        tvMapCache = j;
+        return j;
+      }
+    } catch { /* try next */ }
+  }
+  return null;
+}
+function resolveTv(symbol: string, map: Record<string, string>): string {
+  const clean = symbol.trim().toUpperCase();
+  if (/^(NSE|BSE):/.test(clean)) return clean;
+  return map[clean] ?? `NSE:${clean}`;
+}
+
 function freshWallet(): TestWallet {
   return { cash: START_CASH, positions: {}, trades: [], seq: 0 };
 }
@@ -79,7 +111,11 @@ function fmtInt(n: number | null): string {
 }
 
 export default function Test() {
+  const universe = useLive((s) => s.universe);
   const [symbol, setSymbol] = useState('RELIANCE');
+  const [tvMap, setTvMap] = useState<Record<string, string>>({});
+  const [coverage, setCoverage] = useState<{ universe: number; resolved: number } | null>(null);
+  const [suggestOpen, setSuggestOpen] = useState(false);
   const [tv, setTv] = useState<TvSymbol | null>(null);
   const [asOf, setAsOf] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -95,17 +131,44 @@ export default function Test() {
     } catch { /* storage unavailable */ }
   }, [wallet]);
 
-  const load = useCallback(async (sym: string) => {
-    const clean = sym.trim().toUpperCase();
+  useEffect(() => {
+    let live = true;
+    loadTvMap().then((f) => {
+      if (!live || !f) return;
+      setTvMap(f.map);
+      setCoverage({ universe: f.universe, resolved: f.resolved });
+    });
+    return () => { live = false; };
+  }, []);
+
+  const tvTicker = useMemo(() => resolveTv(symbol, tvMap), [symbol, tvMap]);
+
+  const suggestions = useMemo(() => {
+    const term = symbol.trim().toUpperCase().replace(/\s+/g, '');
+    if (!term || /^(NSE|BSE):/.test(term) || term.length < 2) return [];
+    const out: Array<{ symbol: string; name: string }> = [];
+    for (const u of universe) {
+      const sym = u.symbol.toUpperCase();
+      if (sym === term) return [{ symbol: u.symbol, name: u.name }];
+      if (sym.startsWith(term) || u.name.toUpperCase().includes(term)) {
+        out.push({ symbol: u.symbol, name: u.name });
+        if (out.length >= 8) break;
+      }
+    }
+    return out;
+  }, [symbol, universe]);
+
+  const load = useCallback(async (ticker: string) => {
+    const clean = ticker.trim().toUpperCase();
     if (!clean) return;
     setLoading(true);
     setError(null);
     try {
-      const r = await get<TvResp>(`/api/tv?symbols=${encodeURIComponent(`NSE:${clean}`)}`);
+      const r = await get<TvResp>(`/api/tv?symbols=${encodeURIComponent(clean)}`);
       const row = r.symbols?.[0] ?? null;
       if (!row || row.close == null) {
         setTv(null);
-        setError(`No TradingView data for NSE:${clean} — check the symbol and retry.`);
+        setError(`No TradingView data for ${clean} — this listing may not be on TradingView. Try another symbol.`);
       } else {
         setTv(row);
         setAsOf(r.asOf);
@@ -119,10 +182,10 @@ export default function Test() {
   }, []);
 
   useEffect(() => {
-    void load(symbol);
-    const t = setInterval(() => load(symbol), 60_000);
+    void load(tvTicker);
+    const t = setInterval(() => load(tvTicker), 60_000);
     return () => clearInterval(t);
-  }, [load, symbol]);
+  }, [load, tvTicker]);
 
   const gauge = useMemo(() => scoreLabel(tv?.ta?.['1D']?.all ?? null), [tv]);
 
@@ -200,26 +263,47 @@ export default function Test() {
 
       <div className="panel reveal" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <input
-            className="input"
-            style={{ maxWidth: 220 }}
-            value={symbol}
-            onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-            placeholder="NSE symbol, e.g. RELIANCE"
-          />
-          <button className="btn" onClick={() => load(symbol)} disabled={loading}>
+          <div style={{ position: 'relative' }}>
+            <input
+              className="input"
+              style={{ width: 240 }}
+              value={symbol}
+              onChange={(e) => { setSymbol(e.target.value.toUpperCase()); setSuggestOpen(true); }}
+              onFocus={() => setSuggestOpen(true)}
+              onBlur={() => setTimeout(() => setSuggestOpen(false), 150)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && suggestions.length) setSymbol(suggestions[0].symbol);
+              }}
+              placeholder="Any of 5,138 stocks, e.g. RELIANCE"
+            />
+            {suggestOpen && suggestions.length > 0 && (
+              <div className="search-results">
+                {suggestions.map((s) => (
+                  <div key={s.symbol} className="search-item" onMouseDown={(e) => { e.preventDefault(); setSymbol(s.symbol); setSuggestOpen(false); }}>
+                    <span className="sym">{s.symbol}</span>
+                    <span className="name">{s.name}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <button className="btn" onClick={() => load(tvTicker)} disabled={loading}>
             {loading ? 'Loading…' : 'Refresh'}
           </button>
           {QUICK.map((s) => (
             <button key={s} className="btn" onClick={() => setSymbol(s)} disabled={loading}>{s}</button>
           ))}
         </div>
+        <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+          TradingView ticker: <b>{tvTicker}</b>
+          {coverage ? ` · covers ${coverage.resolved.toLocaleString('en-IN')}/${coverage.universe.toLocaleString('en-IN')} universe stocks` : ''}
+        </p>
       </div>
 
       {error ? (
         <div className="panel reveal">
           <div className="empty">{error}</div>
-          <button className="btn" style={{ marginTop: 8 }} onClick={() => load(symbol)}>Retry</button>
+          <button className="btn" style={{ marginTop: 8 }} onClick={() => load(tvTicker)}>Retry</button>
         </div>
       ) : !tv ? (
         <div className="panel reveal"><div className="empty">Loading TradingView snapshot…</div></div>
