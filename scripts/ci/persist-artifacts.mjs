@@ -13,6 +13,10 @@
 //     fresher upstream) are carried in; the engine is incremental so a run
 //     must never drop another run's freshly checked symbols.
 //   * paper/daily.json — MERGED by day (see unionDaily): every archived day survives; `today` keeps the newer side by updatedAt.
+//   * coverage.json / fills.json — the weekly coverage audit's outputs; the
+//     newer generatedAt wins wholesale for coverage, while fills merge
+//     per-symbol (newer asOf wins) so a partial weekly run never drops a
+//     previous run's filled symbols.
 //   * snapshot.json / paper/latest.json / paper/state.json / reports/* — local (generated this run) wins.
 //
 // Reads the branch via raw.githubusercontent.com (public repo, no auth). No deps.
@@ -199,14 +203,60 @@ async function unionDaily() {
   console.log(`merge-artifacts: paper/daily union -> ${local.days.length} archived days`);
 }
 
+async function unionCoverage() {
+  const local = readJson('coverage.json');
+  const remoteRaw = await fetchRemote('coverage.json');
+  if (remoteRaw) {
+    let remote = null;
+    try {
+      remote = JSON.parse(remoteRaw);
+    } catch {
+      remote = null;
+    }
+    if (remote && typeof remote === 'object') {
+      const lt = Date.parse(local?.generatedAt ?? '') || 0;
+      const rt = Date.parse(remote.generatedAt ?? '') || 0;
+      if (!local || rt > lt) {
+        writeFileSync(join(PUBLIC, 'coverage.json'), JSON.stringify(remote));
+        console.log('merge-artifacts: coverage.json <- newer upstream snapshot');
+      }
+    }
+  }
+  const localFills = readJson('fills.json');
+  const remoteFillsRaw = await fetchRemote('fills.json');
+  if (!localFills || !remoteFillsRaw) return;
+  let remoteFills = null;
+  try {
+    remoteFills = JSON.parse(remoteFillsRaw);
+  } catch {
+    return;
+  }
+  if (!remoteFills || typeof remoteFills !== 'object') return;
+  let added = 0;
+  for (const section of ['fundamentals', 'quotes']) {
+    const mine = localFills[section] ?? {};
+    for (const [sym, entry] of Object.entries(remoteFills[section] ?? {})) {
+      const cur = mine[sym];
+      if (!cur || Date.parse(entry?.asOf ?? '') > Date.parse(cur?.asOf ?? '')) {
+        mine[sym] = entry;
+        added += 1;
+      }
+    }
+    localFills[section] = mine;
+  }
+  writeFileSync(join(PUBLIC, 'fills.json'), JSON.stringify(localFills));
+  console.log(`merge-artifacts: fills.json union +${added} upstream entries`);
+}
+
 async function main() {
   await unionAnalysis();
   await unionNews();
   await unionSignals();
   await unionDependencies();
   await unionDaily();
+  await unionCoverage();
   // sanity: refresh any gating artifact that was only present upstream
-  for (const rel of ['snapshot.json', 'paper/latest.json', 'paper/state.json', 'paper/daily.json', 'signals.json', 'dependencies.json']) {
+  for (const rel of ['snapshot.json', 'paper/latest.json', 'paper/state.json', 'paper/daily.json', 'signals.json', 'dependencies.json', 'coverage.json', 'fills.json']) {
     if (!existsSync(join(PUBLIC, rel))) {
       const remote = await fetchRemote(rel);
       if (remote) {

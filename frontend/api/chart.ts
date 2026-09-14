@@ -526,7 +526,45 @@ export function jsonHeaders(): Record<string, string> {
 // (1D defaults to 1-minute bars during the NSE cash session).
 
 const TTL_MS = 20_000;
-const cache: Record<string, { at: number; rows: OHLCV[] }> = {};
+const cache: Record<string, { at: number; rows: OHLCV[]; interval: string; range: string }> = {};
+
+async function fetchChartWithFallback(
+  symbol: string,
+  range: string,
+  interval: string,
+): Promise<{ rows: OHLCV[]; interval: string; range: string } | null> {
+  const rows = await fetchChart(symbol, range, interval);
+  if (rows?.length) return { rows, interval, range };
+  // When Yahoo has no bars at the preferred granularity (illiquid names,
+  // weekends, holidays), step down to coarser intervals, then widen the
+  // range so the Stock page shows the last session instead of "No candles".
+  const FALLBACKS: Record<string, { range: string; interval: string }[]> = {
+    '1d': [
+      { range: '1d', interval: '5m' },
+      { range: '1d', interval: '15m' },
+      { range: '1d', interval: '30m' },
+      { range: '5d', interval: '1m' },
+      { range: '5d', interval: '15m' },
+    ],
+    '5d': [
+      { range: '5d', interval: '60m' },
+      { range: '5d', interval: '1d' },
+      { range: '1mo', interval: '1d' },
+    ],
+    '1mo': [
+      { range: '1mo', interval: '1d' },
+      { range: '1mo', interval: '1wk' },
+    ],
+    '6mo': [{ range: '6mo', interval: '1wk' }],
+    '1y': [{ range: '1y', interval: '1wk' }],
+    '5y': [{ range: '5y', interval: '1mo' }],
+  };
+  for (const fb of FALLBACKS[range] ?? []) {
+    const r = await fetchChart(symbol, fb.range, fb.interval);
+    if (r?.length) return { rows: r, interval: fb.interval, range: fb.range };
+  }
+  return null;
+}
 
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url);
@@ -554,22 +592,22 @@ export async function GET(request: Request): Promise<Response> {
   const hit = cache[key];
   if (hit && now - hit.at < TTL_MS) {
     return new Response(
-      JSON.stringify({ symbol, range, interval: spec.interval, currency: 'INR', source: 'cache', rows: hit.rows }),
+      JSON.stringify({ symbol, range, interval: hit.interval, actualRange: hit.range, currency: 'INR', source: 'cache', rows: hit.rows }),
       { status: 200, headers: jsonHeaders() },
     );
   }
 
-  const rows = await fetchChart(symbol, range, spec.interval);
-  if (!rows) {
+  const got = await fetchChartWithFallback(symbol, range, spec.interval);
+  if (!got) {
     return new Response(JSON.stringify({ error: 'chart unavailable for symbol' }), {
       status: 404,
       headers: jsonHeaders(),
     });
   }
 
-  cache[key] = { at: now, rows };
+  cache[key] = { at: now, rows: got.rows, interval: got.interval, range: got.range };
   return new Response(
-    JSON.stringify({ symbol, range, interval: spec.interval, currency: 'INR', source: 'yahoo', rows }),
+    JSON.stringify({ symbol, range, interval: got.interval, actualRange: got.range, currency: 'INR', source: 'yahoo', rows: got.rows }),
     { status: 200, headers: jsonHeaders() },
   );
 }

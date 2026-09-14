@@ -13,6 +13,7 @@ import ScreenerPanel from '../components/ScreenerPanel';
 import KeyRatios from '../components/KeyRatios';
 import AIAnalyst from '../components/AIAnalyst';
 import DependenciesPanel from '../components/DependenciesPanel';
+import FillFundaStrip from '../components/FillFundaStrip';
 import {
   sma,
   ema,
@@ -840,6 +841,7 @@ export default function Stock() {
               <div className="empty">
                 {upper} has no fundamental model yet — it can be added to platform coverage on demand.
               </div>
+              <FillFundaStrip symbol={upper} />
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '2px 0 16px' }}>
                 <button
                   className="btn primary"

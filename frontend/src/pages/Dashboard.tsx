@@ -162,7 +162,7 @@ export default function Dashboard() {
                       <td className="mono">{fmt(s.price)}</td>
                       <td><SparkHistory symbol={s.symbol} /></td>
                       <td className="mono"><span className={s.changePct >= 0 ? 'up' : 'down'}>{fmtPct(s.changePct)}</span></td>
-                      <td className="mono muted">{fmtCompact(s.dayVolume)}</td>
+                      <td className="mono muted">{s.dayVolume > 0 ? fmtCompact(s.dayVolume) : <span className="dim">—</span>}</td>
                     </tr>
                   );
                 })}

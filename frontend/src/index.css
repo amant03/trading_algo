@@ -137,6 +137,7 @@ h3 { font-size: 15px; }
   gap: 11px;
   text-decoration: none;
   color: var(--text);
+  flex-shrink: 0;
 }
 
 .brand-mark {
@@ -166,10 +167,12 @@ h3 { font-size: 15px; }
   color: var(--dim);
   letter-spacing: 0.18em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .nav {
   display: flex;
+  align-items: center;
   gap: 4px;
   margin-left: 8px;
 }
@@ -183,6 +186,8 @@ h3 { font-size: 15px; }
   border-radius: var(--radius-sm);
   transition: all 0.16s ease;
   border: 1px solid transparent;
+  white-space: nowrap;
+  line-height: 1.25;
 }
 
 .nav a:hover { color: var(--text); background: rgba(255, 255, 255, 0.04); }
@@ -197,6 +202,11 @@ h3 { font-size: 15px; }
   display: flex;
   align-items: center;
   gap: 14px;
+  flex-shrink: 0;
+}
+
+.topbar-right > .mono {
+  white-space: nowrap;
 }
 
 .live-pill {
@@ -210,6 +220,8 @@ h3 { font-size: 15px; }
   background: rgba(0, 214, 143, 0.08);
   padding: 5px 11px;
   border-radius: 999px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .live-pill .dot {
@@ -1529,6 +1541,7 @@ a.news-headline:hover { color: var(--cyan); }
   align-items: center;
   gap: 10px;
   font-size: 13px;
+  flex-shrink: 0;
 }
 .account-name {
   font-weight: 700;
@@ -1542,6 +1555,7 @@ a.news-headline:hover { color: var(--cyan); }
   color: var(--muted);
   text-decoration: none;
   font-weight: 600;
+  white-space: nowrap;
 }
 .account-link:hover { color: var(--text); }
 .account-link.signup {

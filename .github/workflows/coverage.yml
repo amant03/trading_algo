@@ -1,0 +1,79 @@
+name: Data Coverage
+
+# Weekly data-coverage audit + gap fill for all 5,138 universe stocks.
+#   1. scripts/ci/coverage.ts audits every symbol for quote / intraday /
+#      history / fundamentals / news / signals / tvmap presence and stores
+#      the gaps in frontend/public/coverage.json.
+#   2. scripts/ci/coverage-fill.ts fetches missing fundamentals (screener.in,
+#      TradingView fallback) and quotes into frontend/public/fills.json.
+# Both files are published to the automation-data branch (same pattern as the
+# backend automation; persist-artifacts carries them across force-pushes).
+#
+# Weekly Sunday 02:00 UTC (07:30 IST) + manual dispatch.
+
+on:
+  schedule:
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+
+concurrency:
+  group: data-coverage
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Coverage audit (all stocks × all data points)
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/coverage.ts
+
+      - name: Gap fill (screener.in + TradingView fallbacks)
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/coverage-fill.ts
+        env:
+          COVERAGE_FILL_MAX: '800'
+
+      - name: Publish coverage + fills to automation-data
+        run: |
+          git config user.name "automation-bot"
+          git config user.email "actions@github.com"
+          # Stash the fresh outputs aside: switching branches would clash with
+          # the tracked copies already on automation-data.
+          mkdir -p /tmp/covpub
+          cp frontend/public/coverage.json /tmp/covpub/coverage.json
+          cp frontend/public/fills.json /tmp/covpub/fills.json
+          git fetch origin automation-data || true
+          git checkout -B automation-data origin/automation-data 2>/dev/null || git checkout -B automation-data
+          mkdir -p frontend/public
+          cp /tmp/covpub/coverage.json frontend/public/coverage.json
+          cp /tmp/covpub/fills.json frontend/public/fills.json
+          git add frontend/public/coverage.json frontend/public/fills.json
+          if git diff --cached --quiet; then
+            echo "Nothing new to publish"
+            exit 0
+          fi
+          git commit -m "data(coverage): weekly audit + gap fills #$GITHUB_RUN_NUMBER"
+          for attempt in 1 2 3; do
+            if git push origin automation-data; then
+              echo "published (attempt $attempt)"
+              exit 0
+            fi
+            echo "push raced (attempt $attempt) — rebasing and retrying"
+            git fetch origin automation-data
+            git rebase origin/automation-data || git rebase --abort
+          done
+          echo "publish failed after retries" >&2
+          exit 1

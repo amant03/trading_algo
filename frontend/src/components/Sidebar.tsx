@@ -35,7 +35,7 @@ export default function Sidebar() {
             <span className="sym">{sym}</span>
             {s && (
               <div className="meta">
-                <span className="px">{s.price.toLocaleString('en-IN')}</span>
+                <span className="px">{s.price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 <span className={s.changePct >= 0 ? 'up' : 'down'} style={{ fontSize: 11 }}>{fmtPct(s.changePct)}</span>
               </div>
             )}
@@ -50,7 +50,7 @@ export default function Sidebar() {
           <span className="sym">{i.symbol}</span>
           {s && (
             <div className="meta">
-              <span className="px">{s.price.toLocaleString('en-IN')}</span>
+              <span className="px">{s.price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               <span className={s.changePct >= 0 ? 'up' : 'down'} style={{ fontSize: 11 }}>{fmtPct(s.changePct)}</span>
             </div>
           )}

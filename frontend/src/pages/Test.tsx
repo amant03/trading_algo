@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { get } from '../api';
 import { useLive } from '../ws';
+import CoveragePanel from '../components/CoveragePanel';
 
 // TradingView-powered paper trading lab. Quotes + technical ratings come from
 // the unofficial TradingView scanner endpoint via our /api/tv proxy (the same
@@ -573,6 +574,8 @@ export default function Test() {
           </>
         )}
       </div>
+
+      <CoveragePanel />
 
       <div className="panel reveal reveal-2">
         <div className="panel-title">
