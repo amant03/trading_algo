@@ -499,7 +499,7 @@ async function main(): Promise<void> {
     Number(todayIST.slice(5, 7)) - 1,
     Number(todayIST.slice(8, 10)),
   );
-  const sessionEnd = todayUTC + (5 * 60 + 30) * 60_000; // 15:30 IST -> UTC
+  const sessionEnd = todayUTC + 10 * 60 * 60_000; // 15:30 IST = 10:00 UTC
   const nowMs = Date.now();
   const lastBarEnd = Math.max(0, ...[...universe.values()].flatMap((b) => b[b.length - 1]?.ts ?? 0));
   const dayComplete = lastBarEnd >= sessionEnd || nowMs > sessionEnd + 10 * 60_000 || (lastBarEnd > 0 && dayOf(lastBarEnd) === todayIST && new Date(lastBarEnd).getUTCHours() >= 10);
