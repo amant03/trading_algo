@@ -95,7 +95,7 @@ interface DailyReport {
     bars: number;
     updatedAt: string;
   } | null;
-  days: { date: string; capital: number; equity: number; realizedPnl: number; dayPnl: number; wins: number; trades: number; winPct?: number | null }[];
+  days: { date: string; capital: number; equity: number; realizedPnl: number; dayPnl: number; wins: number; trades: number; winPct?: number | null; ledger?: TradeRow[] }[];
 }
 
 const PAPER_URLS = [
@@ -368,6 +368,7 @@ export default function Paper() {
   const [report, setReport] = useState<PaperReport | null>(null);
   const [daily, setDaily] = useState<DailyReport | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [openDay, setOpenDay] = useState<string | null>(null);
   const [tab, setTab] = useState<'live' | 'paper' | 'us' | 'week'>('live');
 
   useEffect(() => {
@@ -555,19 +556,35 @@ export default function Paper() {
 
             {daily && daily.days.length > 0 && (
               <div style={{ marginTop: 10, padding: '8px 4px 0', borderTop: '1px solid rgba(148,163,184,0.08)' }}>
-                <div className="muted" style={{ fontSize: 12, marginBottom: 6, fontWeight: 600 }}>Recent days</div>
+                <div className="muted" style={{ fontSize: 12, marginBottom: 6, fontWeight: 600 }}>All days — newest first · click a day for every trade</div>
                 <div className="table">
                   <div className="tr head">
                     <span>Date</span><span>P&L</span><span>Trades</span><span>Win %</span>
                   </div>
-                  {daily.days.slice(0, 10).map((dd) => (
-                    <div key={dd.date} className="tr">
-                      <span className="mono muted">{dd.date}</span>
-                      <span className={clsPnL(dd.dayPnl)}>{inr(dd.dayPnl)} ({dd.dayPnl >= 0 ? '+' : ''}{((dd.dayPnl / 100000) * 100).toFixed(2)}%)</span>
-                      <span className="mono">{dd.trades}</span>
-                      <span className="mono">{dd.winPct != null ? `${dd.winPct}%` : '—'}</span>
-                    </div>
-                  ))}
+                  {[...daily.days].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 15).map((dd) => {
+                    const expanded = openDay === dd.date;
+                    const ledger = (dd.ledger ?? []).map((t) => ({ ...t, day: dd.date }));
+                    return (
+                      <div key={dd.date}>
+                        <div
+                          className="tr"
+                          onClick={() => setOpenDay(expanded ? null : dd.date)}
+                          style={{ cursor: dd.ledger?.length ? 'pointer' : 'default' }}
+                          title={dd.ledger?.length ? 'Show all trades' : 'No stored ledger for this day'}
+                        >
+                          <span className="mono muted">{dd.date} {dd.ledger?.length ? (expanded ? '▾' : '▸') : ''}</span>
+                          <span className={clsPnL(dd.dayPnl)}>{inr(dd.dayPnl)} ({dd.dayPnl >= 0 ? '+' : ''}{((dd.dayPnl / 100000) * 100).toFixed(2)}%)</span>
+                          <span className="mono">{dd.trades}</span>
+                          <span className="mono">{dd.winPct != null ? `${dd.winPct}%` : '—'}</span>
+                        </div>
+                        {expanded && ledger.length > 0 && (
+                          <div style={{ padding: '4px 0 10px 8px' }}>
+                            <DailyTradesTable trades={ledger} />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}

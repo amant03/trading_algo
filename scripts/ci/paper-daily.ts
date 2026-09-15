@@ -113,10 +113,22 @@ interface DayState {
   updatedAt: string;
 }
 
+interface ArchiveDay {
+  date: string;
+  capital: number;
+  equity: number;
+  realizedPnl: number;
+  dayPnl: number;
+  wins: number;
+  trades: number; // count (kept for compatibility)
+  winPct?: number | null;
+  ledger: Trade[]; // full trade list, newest-first
+}
+
 interface Store {
   ts: string;
   today: DayState | null;
-  days: { date: string; capital: number; equity: number; realizedPnl: number; dayPnl: number; wins: number; trades: number }[];
+  days: ArchiveDay[];
 }
 
 const dayOf = (ts: number): string =>
@@ -140,11 +152,30 @@ function loadStore(): Store {
   }
 }
 
-async function intradayBars(symbol: string): Promise<{ bars: Bar[]; live: number | null } | null> {
+const byTimeDesc = (a: Trade, b: Trade): number =>
+  b.time < a.time ? -1 : b.time > a.time ? 1 : a.side === b.side ? 0 : a.side === 'SELL' ? -1 : 1;
+
+function archiveDay(store: Store, day: DayState): void {
+  const winPct = day.wins + day.losses > 0 ? Math.round((day.wins / (day.wins + day.losses)) * 100) : null;
+  const entry: ArchiveDay = {
+    date: day.date,
+    capital: day.capital,
+    equity: day.equity,
+    realizedPnl: day.realizedPnl,
+    dayPnl: day.dayPnl,
+    wins: day.wins,
+    trades: day.trades.length,
+    ...(winPct != null ? ({ winPct } as Record<string, number | null>) : {}),
+    ledger: [...day.trades].sort(byTimeDesc),
+  };
+  store.days = [entry, ...store.days.filter((d) => d.date !== day.date)].slice(0, 15);
+}
+
+async function intradayBars(symbol: string, range = '1d'): Promise<{ bars: Bar[]; live: number | null } | null> {
   try {
     const res = await fetch(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}.NS?interval=5m&range=1d`,
-      { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(12_000) },
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}.NS?interval=5m&range=${range}`,
+      { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15_000) },
     );
     if (!res.ok) return null;
     const j = (await res.json()) as {
@@ -364,6 +395,7 @@ function replayDay(date: string, universe: Map<string, Bar[]>, liveBy: Map<strin
         let best: { symbol: string; price: number; why: string; barTs: number } | null = null;
         for (const [sym, bars] of dayBars) {
           if (i >= bars.length) continue;
+          if (i === bars.length - 1) continue; // last bar: entry could never be held — skip
           const bar = bars[i];
           const sig = signalFor(strat.id, bars.slice(0, i + 1));
           if (sig?.dir === 'BUY') {
@@ -427,6 +459,9 @@ function replayDay(date: string, universe: Map<string, Bar[]>, liveBy: Map<strin
   else if (dayBars.size === 0) status = nowHourMin >= 9 * 60 + 20 ? 'holiday' : 'pre-open';
   else status = 'open';
 
+  // Newest-first ledger everywhere (today view + archive).
+  trades.sort(byTimeDesc);
+
   return {
     date,
     startCapital: INITIAL_CAPITAL,
@@ -451,20 +486,11 @@ async function main(): Promise<void> {
   const store = loadStore();
 
   // Archive yesterday / any previous trading day once a NEW IST date shows up.
+  // The full trade ledger is archived (newest-first) so every past day can
+  // show all its trades, not just the P&L summary.
   const prev = store.today;
   if (prev && prev.date !== todayIST && (prev.trades.length > 0 || prev.status === 'closed')) {
-    const winPct = prev.wins + prev.losses > 0 ? Math.round((prev.wins / (prev.wins + prev.losses)) * 100) : null;
-    store.days.unshift({
-      date: prev.date,
-      capital: prev.capital,
-      equity: prev.equity,
-      realizedPnl: prev.realizedPnl,
-      dayPnl: prev.dayPnl,
-      wins: prev.wins,
-      trades: prev.trades.length,
-      ...(winPct != null ? ({ winPct } as Record<string, number | null>) : {}),
-    });
-    store.days = store.days.slice(0, 45);
+    archiveDay(store, prev);
   }
 
   // Universe: env override or the standard seed universe (all large caps).
@@ -492,6 +518,14 @@ async function main(): Promise<void> {
   for (const f of fetched) {
     universe.set(f.symbol, f.bars);
     liveBy.set(f.symbol, f.live);
+  }
+
+  // Backfill: replay past sessions so every archived day carries its full
+  // trade ledger (PAPER_BACKFILL_DAYS=N, 0 = off). Replays are deterministic
+  // and idempotent — re-running refreshes the same dates.
+  const backfillN = Number(process.env.PAPER_BACKFILL_DAYS ?? 0);
+  if (backfillN > 0) {
+    await backfillPastSessions(symbols, store, universe, backfillN);
   }
 
   const todayUTC = Date.UTC(
@@ -538,6 +572,50 @@ async function main(): Promise<void> {
       `dayPnl ${pct}${fmtInr(t.dayPnl)} (${pct}${((t.dayPnl / t.startCapital) * 100).toFixed(2)}%) · ` +
       `${buyCount} buys, ${sellCount} sells · ${t.wins}W/${t.losses}L · archive=${store.days.length} days`,
   );
+}
+
+async function backfillPastSessions(
+  symbols: string[],
+  store: Store,
+  todayUniverse: Map<string, Bar[]>,
+  n: number,
+): Promise<void> {
+  // One range=1mo fetch per symbol covers ~22 sessions of 5m bars.
+  const wide = new Map<string, Bar[]>();
+  let cursor = 0;
+  const worker = async () => {
+    while (true) {
+      const idx = cursor;
+      cursor += 1;
+      if (idx >= symbols.length) return;
+      const symbol = symbols[idx];
+      // Reuse today's bars when the wide fetch adds nothing (saves calls).
+      const data = await intradayBars(symbol, '1mo');
+      if (data && data.bars.length) wide.set(symbol, data.bars);
+      else if (todayUniverse.get(symbol)?.length) wide.set(symbol, todayUniverse.get(symbol)!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(POOL_SIZE, symbols.length) }, worker));
+
+  const todayISTbf = dayOf(Date.now());
+  const dates = [...new Set([...wide.values()].flatMap((b) => b.map((x) => dayOf(x.ts))))]
+    .sort()
+    .filter((d) => d !== todayISTbf) // today is handled by the normal flow below
+    .filter((d) => {
+      let bars = 0;
+      for (const barsOf of wide.values()) bars += barsOf.filter((x) => dayOf(x.ts) === d).length;
+      return bars >= 20; // a real session, not a holiday stub
+    })
+    .slice(-n);
+
+  const liveBy = new Map<string, number | null>();
+  for (const d of dates) {
+    const day = replayDay(d, wide, liveBy, true);
+    if (day.trades.length > 0 || day.status === 'closed') {
+      archiveDay(store, day);
+      console.log(`paper-daily backfill: ${d} ${day.status} · ${day.trades.length} trades · dayPnl ${fmtInr(day.dayPnl)}`);
+    }
+  }
 }
 
 main().catch((e) => {
