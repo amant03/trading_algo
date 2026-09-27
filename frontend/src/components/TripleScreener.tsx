@@ -8,9 +8,9 @@ import type { StockAnalysis } from '../types';
 type Preset = 'elite' | 'high' | 'solid';
 
 const PRESETS: { id: Preset; label: string; min: number; hint: string }[] = [
-  { id: 'elite', label: 'Elite', min: 72, hint: 'A or better on all three' },
-  { id: 'high', label: 'High', min: 56, hint: 'B+ or better on all three' },
-  { id: 'solid', label: 'Solid', min: 48, hint: 'B or better on all three' },
+  { id: 'elite', label: 'Elite', min: 72, hint: 'Blended ≥72 — same score as the stock page' },
+  { id: 'high', label: 'High', min: 56, hint: 'Blended ≥56 — same score as the stock page' },
+  { id: 'solid', label: 'Solid', min: 48, hint: 'Blended ≥48 — same score as the stock page' },
 ];
 
 function scoreTone(score: number): 'up' | 'amber' | 'down' {
@@ -57,10 +57,16 @@ export default function TripleScreener() {
   const rows = useMemo(() => {
     const out: (StockAnalysis & { floor: number })[] = [];
     for (const f of universe) {
+      // Rank by the HEADLINE blended verdict score — the exact number the
+      // stock page shows. Filtering by the floor (weakest screen) hid
+      // high-blended names (e.g. MAHABANK 82 with Graham 58); floor stays
+      // visible as the "weakest link" column.
+      const v = f.verdict?.score;
+      if (v == null || !isFinite(v) || v < min) continue;
       const b = f.screens.buffett.score;
       const l = f.screens.lynch.score;
       const g = f.screens.graham.score;
-      if (b < min || l < min || g < min) continue;
+      if (![b, l, g].every((s) => typeof s === 'number' && isFinite(s))) continue;
       if (sector !== 'all' && f.sector !== sector) continue;
       if (needle) {
         const blob = `${f.symbol} ${f.name ?? ''} ${f.sector ?? ''}`.toLowerCase();
@@ -68,7 +74,7 @@ export default function TripleScreener() {
       }
       out.push({ ...f, floor: Math.min(b, l, g) });
     }
-    out.sort((a, b) => b.floor - a.floor || b.verdict.score - a.verdict.score);
+    out.sort((a, b) => b.verdict.score - a.verdict.score || b.floor - a.floor);
     return out;
   }, [universe, min, sector, needle]);
 
@@ -80,7 +86,7 @@ export default function TripleScreener() {
         <div>
           <h3>Master screener — Buffett + Lynch + Graham</h3>
           <div className="hint" style={{ marginTop: 4, textTransform: 'none', letterSpacing: 0 }}>
-            Names that clear the bar on <b>all three</b> models, not just the blended average.
+            Ranked by the <b>blended verdict</b> — the same 0–100 number each stock page shows.
             Buffett = quality (ROE, margins, low debt). Lynch = growth at a fair price. Graham = margin of safety.
           </div>
         </div>
@@ -88,7 +94,7 @@ export default function TripleScreener() {
       </div>
 
       <div className="ts-toolbar">
-        <div className="seg" role="tablist" aria-label="Minimum grade on all three screens">
+        <div className="seg" role="tablist" aria-label="Minimum blended verdict score">
           {PRESETS.map((p) => (
             <button key={p.id} type="button" className={p.id === preset ? 'active' : ''} onClick={() => setPreset(p.id)}>
               {p.label} ≥{p.min}
@@ -166,15 +172,14 @@ export default function TripleScreener() {
       ) : (
         <div className="empty">
           {universe.length
-            ? `No names clear ${presetMeta.label} (≥${min}) on all three screens${sector !== 'all' ? ` in ${sector}` : ''}. Try Solid, or clear the sector filter.`
+            ? `No names with blended score ${presetMeta.label} (≥${min})${sector !== 'all' ? ` in ${sector}` : ''}. Try Solid, or clear the sector filter.`
             : 'Analyst screens load with the nightly coverage file — they will appear here once analysis.json is in.'}
         </div>
       )}
       {rows.length > 0 && (
         <div className="hint" style={{ padding: '8px 4px 0', lineHeight: 1.55 }}>
-          Floor is the weakest of the three scores — a name only ranks high here if Buffett, Lynch <em>and</em> Graham all agree.
-          Graham is the strictest (cheap on earnings and book), so Elite is a short list by design.
-          {rows[0] ? ` Top floor right now: ${rows[0].symbol} (${rows[0].floor}).` : ''}
+          Floor is the weakest of the three scores, shown for context — ranking is by the blended verdict, identical to the stock page.
+          {rows[0] ? ` Top blended right now: ${rows[0].symbol} (${rows[0].verdict.score}).` : ''}
         </div>
       )}
     </div>
