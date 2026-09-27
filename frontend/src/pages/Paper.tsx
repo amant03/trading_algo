@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
-import USMarket from '../components/USMarket';
 import WeekDuel from '../components/WeekDuel';
 import LivePaper from '../components/LivePaper';
+import BotBrain from '../components/BotBrain';
 
 interface PosRow {
   strategy: string;
@@ -46,6 +46,7 @@ interface TradeRow {
   retPct?: number | null;
   exitClass?: string;
   story?: string;
+  newsDriven?: boolean;
 }
 
 interface PaperReport {
@@ -110,6 +111,8 @@ const STRAT_META_LABELS = new Map([
   ['macd_cross', 'MACD Cross'],
   ['bb_breakout', 'Bollinger'],
   ['supertrend', 'Supertrend'],
+  ['donchian_breakout', 'Donchian'],
+  ['stoch_cross', 'Stochastic'],
 ]);
 
 const STRAT_EXPLANATIONS: Record<string, { name: string; url: string; desc: string }> = {
@@ -137,6 +140,16 @@ const STRAT_EXPLANATIONS: Record<string, { name: string; url: string; desc: stri
     name: 'Supertrend',
     url: 'https://www.investopedia.com/terms/s/supertrend-indicator.asp',
     desc: 'Buy when the Supertrend indicator flips from down to up (bullish trend), sell on the flip to down.',
+  },
+  donchian_breakout: {
+    name: 'Donchian Breakout',
+    url: 'https://www.investopedia.com/terms/d/donchianchannels.asp',
+    desc: 'Buy when price breaks above the highest high of the last 20 bars (new strength), sell on a break below the lowest low.',
+  },
+  stoch_cross: {
+    name: 'Stochastic Crossover',
+    url: 'https://www.investopedia.com/terms/s/stochasticoscillator.asp',
+    desc: 'Buy when %K crosses above %D near oversold territory, sell on the cross down near overbought.',
   },
 };
 
@@ -263,7 +276,12 @@ function DailyTradesTable({ trades }: { trades: TradeRow[] }) {
           <span className="mono">{t.qty}</span>
           <span className="mono">{inr(t.price, 2)}</span>
           <span className={clsPnL(t.pnl)}>{inr(t.pnl)}{t.retPct != null ? ` (${t.retPct >= 0 ? '+' : ''}${t.retPct}%)` : ''}</span>
-          <span className="muted" style={{ fontSize: 12 }}>{t.reason}</span>
+          <span className="muted" style={{ fontSize: 12 }}>
+            {t.newsDriven && (
+              <b style={{ color: '#f72585', background: 'rgba(247,37,133,0.12)', borderRadius: 4, padding: '1px 6px', marginRight: 5, fontSize: 10.5 }}>NEWS</b>
+            )}
+            {t.reason}
+          </span>
         </div>
       ))}
     </div>
@@ -369,7 +387,7 @@ export default function Paper() {
   const [daily, setDaily] = useState<DailyReport | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [openDay, setOpenDay] = useState<string | null>(null);
-  const [tab, setTab] = useState<'live' | 'paper' | 'us' | 'week'>('live');
+  const [tab, setTab] = useState<'live' | 'paper' | 'week' | 'brain'>('live');
 
   useEffect(() => {
     let live = true;
@@ -450,11 +468,11 @@ export default function Paper() {
         <button className={tab === 'paper' ? 'active' : ''} onClick={() => setTab('paper')}>
           📈 India Paper Lab
         </button>
-        <button className={tab === 'us' ? 'active' : ''} onClick={() => setTab('us')}>
-          🇺🇸 US Market
-        </button>
         <button className={tab === 'week' ? 'active' : ''} onClick={() => setTab('week')}>
           Week Backtest
+        </button>
+        <button className={tab === 'brain' ? 'active' : ''} onClick={() => setTab('brain')}>
+          Bot Brain
         </button>
       </div>
 
@@ -462,7 +480,7 @@ export default function Paper() {
 
       {tab === 'week' && <WeekDuel />}
 
-      {tab === 'us' && <USMarket />}
+      {tab === 'brain' && <BotBrain />}
 
       {tab === 'paper' && (
       <>

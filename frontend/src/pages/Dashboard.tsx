@@ -8,6 +8,7 @@ import { Sparkline } from '../components/Sparkline';
 import SignalFeed from '../components/SignalFeed';
 import NewsFeed from '../components/NewsFeed';
 import TripleScreener from '../components/TripleScreener';
+import FiiDiiPanel from '../components/FiiDiiPanel';
 
 function SparkHistory({ symbol }: { symbol: string }) {
   const stored = useLive((s) => s.sparklines)[symbol];
@@ -240,6 +241,8 @@ export default function Dashboard() {
       </div>
 
       <TripleScreener />
+
+      <FiiDiiPanel />
 
       <div className="panel reveal reveal-1">
         <div className="panel-title">

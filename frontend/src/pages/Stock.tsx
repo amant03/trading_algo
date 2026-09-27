@@ -14,6 +14,7 @@ import KeyRatios from '../components/KeyRatios';
 import AIAnalyst from '../components/AIAnalyst';
 import DependenciesPanel from '../components/DependenciesPanel';
 import FillFundaStrip from '../components/FillFundaStrip';
+import SectorNews from '../components/SectorNews';
 import {
   sma,
   ema,
@@ -878,7 +879,9 @@ export default function Stock() {
       )}
 
       {tab === 'news' && (
-        <div className="grid-2">
+        <>
+          <SectorNews symbol={upper} />
+          <div className="grid-2">
           <div className="panel">
             <div className="panel-title">
               <h3>News — {upper}</h3>
@@ -926,7 +929,8 @@ export default function Stock() {
               </div>
             </div>
           </div>
-        </div>
+          </div>
+        </>
       )}
     </div>
   );

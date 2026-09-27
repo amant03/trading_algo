@@ -89,7 +89,7 @@ const MARKETS: MarketCfg[] = [
     session: [9 * 60 + 30, 16 * 60],
     minPrice: 1,
   },
-];
+].filter((m) => (process.env.PAPER_WEEK_MARKETS ?? 'in,us').split(',').map((s) => s.trim()).includes(m.key));
 
 const SL_PCT = 0.01; // 1% hard stop — the ONLY exit besides signal/EOD
 const SLIPPAGE = 0.0005;
@@ -578,8 +578,8 @@ async function main(): Promise<void> {
   const store: WeekStore = {
     ts: new Date().toISOString(),
     config: {
-      inCapital: MARKETS[0].capital,
-      usCapital: MARKETS[1].capital,
+      inCapital: MARKETS.find((m) => m.key === 'in')?.capital ?? 10_000,
+      usCapital: MARKETS.find((m) => m.key === 'us')?.capital ?? 1_000,
       stopLossPct: SL_PCT,
       takeProfit: null,
       strategies: STRATEGIES.map((s) => s.id),

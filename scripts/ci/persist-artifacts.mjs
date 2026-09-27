@@ -203,8 +203,64 @@ async function unionDaily() {
   console.log(`merge-artifacts: paper/daily union -> ${local.days.length} archived days`);
 }
 
-async function unionCoverage() {
-  const local = readJson('coverage.json');
+async function unionSectorNews() {
+  const local = readJson('sector-news.json');
+  const remoteRaw = await fetchRemote('sector-news.json');
+  if (!local || !remoteRaw) return;
+  let remote;
+  try {
+    remote = JSON.parse(remoteRaw);
+  } catch {
+    return;
+  }
+  if (!remote || typeof remote !== 'object' || !remote.sectors) return;
+  const sectors = local.sectors ?? {};
+  let added = 0;
+  for (const [sector, list] of Object.entries(remote.sectors)) {
+    if (!Array.isArray(list)) continue;
+    const mine = Array.isArray(sectors[sector]) ? sectors[sector] : [];
+    const seen = new Set(mine.map((x) => x?.title));
+    for (const item of list) {
+      if (item?.title && !seen.has(item.title)) {
+        mine.push(item);
+        seen.add(item.title);
+        added += 1;
+      }
+    }
+    mine.sort((a, b) => (a.publishedAt < b.publishedAt ? 1 : -1));
+    sectors[sector] = mine.slice(0, 30);
+  }
+  local.sectors = sectors;
+  writeFileSync(join(PUBLIC, 'sector-news.json'), JSON.stringify(local));
+  console.log(`merge-artifacts: sector-news union +${added} upstream items`);
+}
+
+async function unionFiiDii() {
+  const local = readJson('fii-dii.json');
+  const remoteRaw = await fetchRemote('fii-dii.json');
+  if (!local || !remoteRaw) return;
+  let remote;
+  try {
+    remote = JSON.parse(remoteRaw);
+  } catch {
+    return;
+  }
+  if (!remote || !Array.isArray(remote.days)) return;
+  const byDate = new Map((local.days ?? []).map((d) => [d?.date, d]));
+  let added = 0;
+  for (const d of remote.days) {
+    if (!d?.date) continue;
+    if (!byDate.has(d.date)) {
+      byDate.set(d.date, d);
+      added += 1;
+    }
+  }
+  local.days = [...byDate.values()].sort((a, b) => (a.date < b.date ? -1 : 1)).slice(-30);
+  writeFileSync(join(PUBLIC, 'fii-dii.json'), JSON.stringify(local));
+  console.log(`merge-artifacts: fii-dii union +${added} upstream sessions`);
+}
+
+async function unionCoverage() {  const local = readJson('coverage.json');
   const remoteRaw = await fetchRemote('coverage.json');
   if (remoteRaw) {
     let remote = null;
@@ -255,8 +311,10 @@ async function main() {
   await unionDependencies();
   await unionDaily();
   await unionCoverage();
+  await unionSectorNews();
+  await unionFiiDii();
   // sanity: refresh any gating artifact that was only present upstream
-  for (const rel of ['snapshot.json', 'paper/latest.json', 'paper/state.json', 'paper/daily.json', 'signals.json', 'dependencies.json', 'coverage.json', 'fills.json']) {
+  for (const rel of ['snapshot.json', 'paper/latest.json', 'paper/state.json', 'paper/daily.json', 'signals.json', 'dependencies.json', 'coverage.json', 'fills.json', 'sector-news.json', 'sectors.json', 'fii-dii.json']) {
     if (!existsSync(join(PUBLIC, rel))) {
       const remote = await fetchRemote(rel);
       if (remote) {

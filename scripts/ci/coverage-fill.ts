@@ -49,6 +49,9 @@ interface FillFunda {
   faceValue: number | null;
   weekHigh52: number | null;
   weekLow52: number | null;
+  fiiHolding: number | null; // % (quarterly shareholding pattern)
+  diiHolding: number | null; // % (quarterly shareholding pattern)
+  shpQuarter: string | null;
   source: 'screener.in' | 'tradingview';
   asOf: string;
 }
@@ -73,8 +76,8 @@ const noteFail = (s: string) => {
   if (failSamples.length < 8) failSamples.push(s);
 };
 
-async function fetchText(url: string, timeoutMs: number): Promise<string | null> {
-  for (let attempt = 1; attempt <= 3; attempt++) {
+async function fetchText(url: string, timeoutMs: number, attempts = 3): Promise<string | null> {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(timeoutMs) });
       if (res.status === 429 || res.status >= 500) {
@@ -90,10 +93,10 @@ async function fetchText(url: string, timeoutMs: number): Promise<string | null>
   return null;
 }
 
-async function screenerSearch(symbol: string): Promise<string | null> {
+async function screenerSearch(symbol: string, attempts = 3): Promise<string | null> {
   // Stagger + retry: screener.in rate-limits rapid bursts.
   await sleep(PAUSE_MS * (1 + Math.random()));
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       const res = await fetch(`https://www.screener.in/api/company/search/?q=${encodeURIComponent(symbol)}`, {
         headers: { 'User-Agent': UA },
@@ -161,6 +164,7 @@ async function screenerFill(symbol: string): Promise<Omit<FillFunda, 'source' | 
     ?? null;
   const bookValue = getRatio(r, 'book value');
   const curPrice = getRatio(r, 'current price');
+  const shp = parseShp(html);
   return {
     name,
     sector,
@@ -176,7 +180,41 @@ async function screenerFill(symbol: string): Promise<Omit<FillFunda, 'source' | 
     faceValue: getRatio(r, 'face value'),
     weekHigh52: null,
     weekLow52: null,
+    fiiHolding: shp.fiiHolding,
+    diiHolding: shp.diiHolding,
+    shpQuarter: shp.shpQuarter,
   };
+}
+
+/** Quarterly shareholding pattern: FIIs / DIIs % for the latest quarter. */
+function parseShp(html: string): { fiiHolding: number | null; diiHolding: number | null; shpQuarter: string | null } {
+  let fiiHolding: number | null = null;
+  let diiHolding: number | null = null;
+  let shpQuarter: string | null = null;
+  const shpIdx = html.indexOf('id="quarterly-shp"');
+  if (shpIdx < 0) return { fiiHolding, diiHolding, shpQuarter };
+  let sec = html.slice(shpIdx, shpIdx + 15000);
+  const yearlyCut = sec.indexOf('id="yearly-shp"');
+  if (yearlyCut > 0) sec = sec.slice(0, yearlyCut);
+  const quarters = [...sec.matchAll(/<th[^>]*>([^<>]{1,20})<\/th>/g)]
+    .map((m) => m[1].trim())
+    .filter((t) => /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}$/.test(t));
+  if (quarters.length) shpQuarter = quarters[quarters.length - 1];
+  const rows = [...sec.matchAll(/<tr[^>]*>([\s\S]{0,4000}?)<\/tr>/g)].map((m) => m[1]);
+  for (const row of rows) {
+    const cells = [...row.matchAll(/<td[^>]*>([\s\S]{0,400}?)<\/td>/g)].map((m) => m[1]);
+    if (!cells.length) continue;
+    const label = cells[0].replace(/<[^>]+>/g, ' ').replace(/&nbsp;|\+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+    if (label !== 'FIIS' && label !== 'DIIS') continue;
+    const vals = cells.slice(1).map((c) => {
+      const n = Number(c.replace(/<[^>]+>/g, '').replace(/[% ,]/g, ''));
+      return isFinite(n) ? n : null;
+    }).filter((v): v is number => v != null);
+    if (!vals.length) continue;
+    if (label === 'FIIS') fiiHolding = vals[vals.length - 1];
+    else diiHolding = vals[vals.length - 1];
+  }
+  return { fiiHolding, diiHolding, shpQuarter };
 }
 
 // ---- tradingview scanner fallback ----------------------------------------------
@@ -272,6 +310,15 @@ async function main(): Promise<void> {
   const todo = fundaGaps.slice(0, FILL_MAX);
   stats.fundamentalsAttempted = todo.length;
 
+  // SHP backfill: entries filled before FII/DII parsing existed get their
+  // holdings merged in (SHP_MAX per run, cheapest-first: page already known).
+  // Single-attempt best-effort: weekly cadence retries misses.
+  const SHP_MAX = Number(process.env.COVERAGE_SHP_MAX ?? 150);
+  const shpTodo = Object.entries(fundamentals)
+    .filter(([, v]) => v.source === 'screener.in' && v.fiiHolding == null)
+    .map(([k]) => k)
+    .slice(0, SHP_MAX);
+
   // TV fallback data for the whole todo list in a few batched calls.
   const tvTickers = todo.flatMap((s) => [`NSE:${s}`, `BSE:${s}`]);
   const tvMap = new Map<string, Array<number | string | null>>();
@@ -308,8 +355,8 @@ async function main(): Promise<void> {
         if (price != null && price > 0) {
           const mcap = num(d?.[6]);
           fundamentals[sym] = {
-            name: str(d[1]) || str(d[0]) || null,
-            sector: str(d[12]) || null,
+            name: str(d?.[1]) || str(d?.[0]) || null,
+            sector: str(d?.[12]) || null,
             price,
             marketCapCr: mcap != null ? (mcap * USDINR) / 1e7 : null,
             pe: num(d?.[7]),
@@ -322,6 +369,9 @@ async function main(): Promise<void> {
             faceValue: null,
             weekHigh52: num(d?.[14]),
             weekLow52: num(d?.[15]),
+            fiiHolding: null,
+            diiHolding: null,
+            shpQuarter: null,
             source: 'tradingview',
             asOf,
           };
@@ -335,6 +385,32 @@ async function main(): Promise<void> {
     }
   };
   await Promise.all(Array.from({ length: Math.min(POOL, Math.max(todo.length, 1)) }, worker));
+
+  if (shpTodo.length) {
+    let sc = 0;
+    let shpHit = 0;
+    const swords = async () => {
+      while (true) {
+        const sym = shpTodo[sc];
+        sc += 1;
+        if (sym == null) return;
+        const url = await screenerSearch(sym, 1);
+        if (url) {
+          const html = await fetchText(url, 12_000, 1);
+          if (html && html.length >= 20_000) {
+            const shp = parseShp(html);
+            if (shp.fiiHolding != null || shp.diiHolding != null) {
+              fundamentals[sym] = { ...fundamentals[sym], ...shp };
+              shpHit += 1;
+            }
+          }
+        }
+        if (sc % 50 === 0) console.log(`fill: shp ${sc}/${shpTodo.length} (hit ${shpHit})`);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(6, Math.max(shpTodo.length, 1)) }, swords));
+    console.log(`fill: shp backfill done over ${shpTodo.length} entries (hit ${shpHit})`);
+  }
 
   mkdirSync(PUB, { recursive: true });
   writeFileSync(OUT, JSON.stringify({ generatedAt: asOf, stats, fundamentals, quotes }));

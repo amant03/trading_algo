@@ -46,6 +46,11 @@ jobs:
         env:
           COVERAGE_FILL_MAX: '800'
 
+      # Symbol → sector/industry map (TradingView scanner, no key). Powers
+      # sector-wide news on stock pages. Merged incrementally, barely moves.
+      - name: Sector map
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/sectors.ts
+
       - name: Publish coverage + fills to automation-data
         run: |
           git config user.name "automation-bot"
@@ -55,12 +60,13 @@ jobs:
           mkdir -p /tmp/covpub
           cp frontend/public/coverage.json /tmp/covpub/coverage.json
           cp frontend/public/fills.json /tmp/covpub/fills.json
+          cp frontend/public/sectors.json /tmp/covpub/sectors.json
           git fetch origin automation-data || true
           git checkout -B automation-data origin/automation-data 2>/dev/null || git checkout -B automation-data
-          mkdir -p frontend/public
           cp /tmp/covpub/coverage.json frontend/public/coverage.json
           cp /tmp/covpub/fills.json frontend/public/fills.json
-          git add frontend/public/coverage.json frontend/public/fills.json
+          cp /tmp/covpub/sectors.json frontend/public/sectors.json
+          git add frontend/public/coverage.json frontend/public/fills.json frontend/public/sectors.json
           if git diff --cached --quiet; then
             echo "Nothing new to publish"
             exit 0

@@ -16,6 +16,9 @@ interface FillFunda {
   faceValue: number | null;
   weekHigh52: number | null;
   weekLow52: number | null;
+  fiiHolding: number | null;
+  diiHolding: number | null;
+  shpQuarter: string | null;
   source: string;
   asOf: string;
 }
@@ -81,6 +84,8 @@ export default function FillFundaStrip({ symbol }: { symbol: string }) {
     ['Div yield %', fill.divYield != null ? fill.divYield.toFixed(2) : '—'],
     ['Book value', fill.bookValue != null ? `₹${fmt(fill.bookValue)}` : '—'],
     ['52w range', fill.weekLow52 != null ? `₹${fmt(fill.weekLow52, 0)}–${fmt(fill.weekHigh52 ?? fill.weekLow52, 0)}` : '—'],
+    ['FII holding', fill.fiiHolding != null ? `${fill.fiiHolding.toFixed(2)}%${fill.shpQuarter ? ` (${fill.shpQuarter})` : ''}` : '—'],
+    ['DII holding', fill.diiHolding != null ? `${fill.diiHolding.toFixed(2)}%${fill.shpQuarter ? ` (${fill.shpQuarter})` : ''}` : '—'],
   ];
 
   return (

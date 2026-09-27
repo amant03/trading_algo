@@ -98,6 +98,12 @@ jobs:
         env:
           NEWS_MAX_SYMBOLS: '40'
 
+      # Sector-wide news (market hours): member headlines re-tagged by sector
+      # + policy/regulator RSS wires → frontend/public/sector-news.json.
+      - name: Sector news (market hours)
+        if: env.MODE == 'news'
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/sector-news.ts
+
       - name: Pre-stage paper state (market hours)
         if: env.MODE == 'news'
         run: |
@@ -110,6 +116,8 @@ jobs:
             -o frontend/public/paper/week.json || echo "no weekly duel state yet"
           curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/paper/live.json \
             -o frontend/public/paper/live.json || echo "no live paper state yet"
+          curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/paper/learning.json \
+            -o frontend/public/paper/learning.json || echo "no bot brain yet"
 
       - name: Paper live-stop (market hours)
         if: env.MODE == 'news'
@@ -122,11 +130,13 @@ jobs:
         if: env.MODE == 'news'
         run: node node_modules/tsx/dist/cli.mjs scripts/ci/paper-daily.ts
 
-      # Weekly Duel (market hours): fresh ₹10,000 (NSE) + $1,000 (US) every
-      # day, 5 sessions replayed, 1% stop, no take-profit (see paper-week.ts).
+      # Weekly Duel (market hours): fresh ₹10,000 NSE every day, 5 sessions
+      # replayed, 1% stop, no take-profit (see paper-week.ts). India focus.
       - name: Weekly Duel paper trade (market hours)
         if: env.MODE == 'news'
         run: node node_modules/tsx/dist/cli.mjs scripts/ci/paper-week.ts
+        env:
+          PAPER_WEEK_MARKETS: 'in'
 
       # Live paper trading (market hours): today's session only, positions
       # held open and marked to the latest bar → paper/live.json.
@@ -135,6 +145,7 @@ jobs:
         run: node node_modules/tsx/dist/cli.mjs scripts/ci/paper-week.ts
         env:
           PAPER_WEEK_LIVE: '1'
+          PAPER_WEEK_MARKETS: 'in'
 
       # TradingView buyability ranking (market hours): full-market scan of
       # the 5,122 mapped tickers → frontend/public/tv-rank.json for the Test
@@ -280,6 +291,8 @@ jobs:
             -o frontend/public/paper/week.json || echo "no previous weekly duel state — first seed run"
           curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/paper/live.json \
             -o frontend/public/paper/live.json || echo "no previous live paper state — first seed run"
+          curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/paper/learning.json \
+            -o frontend/public/paper/learning.json || echo "no previous bot brain — first seed run"
 
       # Paper trading: 5 classic strategies on a ₹1,00,000 virtual account,
       # advanced one trading day per run (see scripts/ci/paper.ts).
@@ -295,11 +308,13 @@ jobs:
         if: env.MODE == 'full'
         run: node node_modules/tsx/dist/cli.mjs scripts/ci/paper-daily.ts
 
-      # Weekly Duel: fresh ₹10,000 (NSE) + $1,000 (US) per day over the last
-      # 5 sessions, 1% stop-loss, unlimited upside, EOD square-off.
+      # Weekly Duel: fresh ₹10,000 NSE per day over the last 5 sessions,
+      # 1% stop-loss, unlimited upside, EOD square-off. India focus.
       - name: Weekly Duel paper trade
         if: env.MODE == 'full'
         run: node node_modules/tsx/dist/cli.mjs scripts/ci/paper-week.ts
+        env:
+          PAPER_WEEK_MARKETS: 'in'
 
       # Live paper trading: today's session only, open positions kept and
       # marked to the latest bar → paper/live.json.
@@ -308,6 +323,13 @@ jobs:
         run: node node_modules/tsx/dist/cli.mjs scripts/ci/paper-week.ts
         env:
           PAPER_WEEK_LIVE: '1'
+          PAPER_WEEK_MARKETS: 'in'
+
+      # FII/DII flows (full): NSDL official FPI + Moneycontrol FII/DII cash
+      # and F&O → frontend/public/fii-dii.json for the dashboard panel.
+      - name: FII/DII flows
+        if: env.MODE == 'full'
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/fii-dii.ts
 
       - name: Job summary
         if: always()
@@ -366,6 +388,8 @@ jobs:
           git add frontend/public/signals.json 2>/dev/null || true
           git add frontend/public/dependencies.json 2>/dev/null || true
           git add frontend/public/tv-rank.json 2>/dev/null || true
+          git add frontend/public/fii-dii.json 2>/dev/null || true
+          git add frontend/public/sector-news.json 2>/dev/null || true
           git add frontend/public/paper/ 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "Nothing new to commit"

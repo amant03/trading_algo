@@ -39,9 +39,23 @@ export default function TripleScreener() {
   const navigate = useNavigate();
   const fundamentals = useLive((s) => s.fundamentals);
   const snapshots = useLive((s) => s.snapshots);
+  const universeList = useLive((s) => s.universe);
   const [preset, setPreset] = useState<Preset>('high');
   const [q, setQ] = useState('');
   const [sector, setSector] = useState('all');
+  const [cap, setCap] = useState<'all' | 'large' | 'mid' | 'small'>('all');
+
+  const capOf = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const u of universeList) m.set(u.symbol.toUpperCase(), u.cap);
+    return m;
+  }, [universeList]);
+
+  const capLabel = (symbol: string): string => {
+    const c = capOf.get(symbol.toUpperCase());
+    if (c === 'large' || c === 'mid' || c === 'small') return c;
+    return 'small';
+  };
 
   const min = PRESETS.find((p) => p.id === preset)!.min;
   const needle = q.trim().toLowerCase();
@@ -75,8 +89,8 @@ export default function TripleScreener() {
       out.push({ ...f, floor: Math.min(b, l, g) });
     }
     out.sort((a, b) => b.verdict.score - a.verdict.score || b.floor - a.floor);
-    return out;
-  }, [universe, min, sector, needle]);
+    return out.filter((r) => cap === 'all' || capLabel(r.symbol) === cap);
+  }, [universe, min, sector, needle, cap, capOf]);
 
   const presetMeta = PRESETS.find((p) => p.id === preset)!;
 
@@ -98,6 +112,13 @@ export default function TripleScreener() {
           {PRESETS.map((p) => (
             <button key={p.id} type="button" className={p.id === preset ? 'active' : ''} onClick={() => setPreset(p.id)}>
               {p.label} ≥{p.min}
+            </button>
+          ))}
+        </div>
+        <div className="seg" role="tablist" aria-label="Market capitalisation">
+          {(['all', 'large', 'mid', 'small'] as const).map((c) => (
+            <button key={c} type="button" className={cap === c ? 'active' : ''} onClick={() => setCap(c)}>
+              {c === 'all' ? 'All caps' : c[0].toUpperCase() + c.slice(1)}
             </button>
           ))}
         </div>
@@ -146,7 +167,7 @@ export default function TripleScreener() {
                   <tr key={p.symbol} onClick={() => navigate(`/stock/${p.symbol}`)}>
                     <td>
                       <div className="sym-cell">{p.symbol}</div>
-                      <div className="name-cell">{p.name ?? p.sector ?? ''}</div>
+                      <div className="name-cell">{p.name ?? p.sector ?? ''} · <span style={{ textTransform: 'capitalize' }}>{capLabel(p.symbol)}-cap</span></div>
                     </td>
                     <td><ScreenMark label="quality" score={p.screens.buffett.score} grade={p.screens.buffett.grade} /></td>
                     <td><ScreenMark label="growth" score={p.screens.lynch.score} grade={p.screens.lynch.grade} /></td>

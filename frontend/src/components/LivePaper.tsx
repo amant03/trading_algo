@@ -9,9 +9,10 @@ interface LiveTrade {
   price: number;
   pnl: number;
   retPct: number | null;
-  exitClass: 'entry' | 'eod' | 'signal-exit' | 'stop-loss';
+  exitClass: 'entry' | 'eod' | 'signal-exit' | 'stop-loss' | 'news-exit';
   reason: string;
   tech: string;
+  newsDriven?: boolean;
 }
 
 interface LiveOpen {
@@ -46,7 +47,7 @@ interface LiveLeg {
 interface LiveStore {
   ts: string;
   in: LiveLeg | null;
-  us: LiveLeg | null;
+  us?: LiveLeg | null;
 }
 
 const LIVE_URLS = [
@@ -61,13 +62,22 @@ const STRAT_LABELS = new Map([
   ['macd_cross', 'MACD Cross'],
   ['bb_breakout', 'Bollinger'],
   ['supertrend', 'Supertrend'],
+  ['donchian_breakout', 'Donchian'],
+  ['stoch_cross', 'Stochastic'],
 ]);
+
+const EXIT_LABEL: Record<LiveTrade['exitClass'], string> = {
+  entry: 'Entry',
+  eod: 'Square-off',
+  'signal-exit': 'Signal exit',
+  'stop-loss': 'Stop-loss',
+  'news-exit': 'News exit',
+};
 
 const moneyIn = (n: number | null | undefined, digits = 0): string =>
   n == null || !isFinite(n) ? '—' : `₹${n.toLocaleString('en-IN', { maximumFractionDigits: digits })}`;
 
-const moneyUs = (n: number | null | undefined, digits = 0): string =>
-  n == null || !isFinite(n) ? '—' : `$${n.toLocaleString('en-US', { maximumFractionDigits: digits })}`;
+const money = moneyIn;
 
 const cls = (n: number | null | undefined): string => (n == null ? '' : n > 0.004 ? 'up' : n < -0.004 ? 'down' : '');
 
@@ -77,24 +87,14 @@ const prettyDate = (date: string): string => {
 };
 
 function LegPanel({
-  title,
-  pill,
-  pillFg,
-  pillBg,
   leg,
-  money,
   refreshedAt,
 }: {
-  title: string;
-  pill: string;
-  pillFg: string;
-  pillBg: string;
   leg: LiveLeg | null;
-  money: (n: number | null | undefined, d?: number) => string;
   refreshedAt: string;
 }) {
   const [showTrades, setShowTrades] = useState(false);
-  if (!leg) return <div className="empty">No live session published for this market yet.</div>;
+  if (!leg) return <div className="empty">No live session published yet.</div>;
   const live = leg.status === 'open';
   const sells = leg.trades.filter((t) => t.side === 'SELL');
 
@@ -102,10 +102,10 @@ function LegPanel({
     <div className="panel reveal" style={{ padding: '14px 18px' }}>
       <div className="panel-title" style={{ flexWrap: 'wrap', gap: 10 }}>
         <h3>
-          <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.08em', color: pillFg, background: pillBg, borderRadius: 4, padding: '2px 7px', marginRight: 8 }}>
-            {pill}
+          <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.08em', color: '#ffb020', background: 'rgba(255,176,32,0.12)', borderRadius: 4, padding: '2px 7px', marginRight: 8 }}>
+            NSE
           </span>
-          {title}
+          India · NSE — fresh ₹10,000
         </h3>
         <span className="hint" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span className="dot" style={{ background: live ? 'var(--up)' : 'var(--down)', width: 7, height: 7, borderRadius: '50%', display: 'inline-block' }} />
@@ -182,7 +182,8 @@ function LegPanel({
                     {t.side === 'SELL' ? `${money(t.pnl)}${t.retPct != null ? ` (${t.retPct >= 0 ? '+' : ''}${t.retPct}%)` : ''}` : '—'}
                   </span>
                   <span className="muted" style={{ fontSize: 11 }}>
-                    {t.exitClass === 'entry' ? 'Entry' : t.exitClass === 'stop-loss' ? 'Stop-loss' : t.exitClass === 'signal-exit' ? 'Signal exit' : 'Square-off'}
+                    {EXIT_LABEL[t.exitClass]}
+                    {t.newsDriven && t.exitClass === 'entry' ? ' · NEWS' : ''}
                   </span>
                   <span style={{ fontSize: 12, lineHeight: 1.5, whiteSpace: 'normal', textAlign: 'left' }}>
                     <div>{t.reason}</div>
@@ -214,7 +215,7 @@ export default function LivePaper() {
           const ct = res.headers.get('content-type') ?? '';
           if (ct.includes('text/html')) continue;
           const data = (await res.json()) as LiveStore;
-          if (!data || !('in' in data) || !('us' in data)) continue;
+          if (!data || !('in' in data) || !data.in) continue;
           if (live) {
             setStore(data);
             setErr(null);
@@ -242,18 +243,17 @@ export default function LivePaper() {
     <div>
       <div className="panel reveal" style={{ marginBottom: 12, padding: '12px 16px' }}>
         <div className="panel-title" style={{ marginBottom: 8 }}>
-          <h3>Live paper trading — today&apos;s session</h3>
-          <span className="hint">fresh ₹10,000 NSE + $1,000 US · long-only · 1% stop · no take-profit</span>
+          <h3>Live paper trading — today&apos;s NSE session</h3>
+          <span className="hint">fresh ₹10,000 · long-only · 1% stop · no take-profit · news-aware</span>
         </div>
         <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.55 }}>
-          The automation replays today&apos;s 5-minute bars every run during market hours. Positions stay open and are
-          marked to the latest bar; everything squares off at the closing bell and the account resets fresh tomorrow.
-          For multi-day history, see the Week Backtest tab.
+          The automation replays today&apos;s 5-minute NSE bars every run during market hours, fused with fresh
+          news headlines. Positions stay open and are marked to the latest bar; everything squares off at the
+          closing bell and the account resets fresh tomorrow. For multi-day history, see the Week Backtest tab.
         </div>
       </div>
       <div style={{ display: 'grid', gap: 12 }}>
-        <LegPanel title="India · NSE" pill="NSE" pillFg="#ffb020" pillBg="rgba(255,176,32,0.12)" leg={store.in} money={moneyIn} refreshedAt={refreshedAt} />
-        <LegPanel title="USA · NYSE/NASDAQ" pill="US" pillFg="#4cc9f0" pillBg="rgba(76,201,240,0.12)" leg={store.us} money={moneyUs} refreshedAt={refreshedAt} />
+        <LegPanel leg={store.in} refreshedAt={refreshedAt} />
       </div>
     </div>
   );
