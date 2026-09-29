@@ -65,6 +65,7 @@ export default function AdvChart({
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [w, setW] = useState(640);
   const [hoverI, setHoverI] = useState<number | null>(null);
+  const [hoverX, setHoverX] = useState<number | null>(null);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -174,7 +175,7 @@ export default function AdvChart({
         </div>
       </div>
 
-      <div className="advchart-body" ref={wrapRef} onMouseLeave={() => setHoverI(null)}>
+      <div className="advchart-body" ref={wrapRef} onMouseLeave={() => { setHoverI(null); setHoverX(null); }}>
         <svg
           width="100%"
           height={h}
@@ -190,6 +191,7 @@ export default function AdvChart({
           const t = (viewX - PAD_L) / plotW;
           const i = Math.round(t * Math.max(rows.length - 1, 1));
           setHoverI(i >= 0 && i < rows.length ? i : null);
+          setHoverX(e.clientX - rect.left);
         }}>
           <defs>
             <linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
@@ -270,6 +272,28 @@ export default function AdvChart({
             </g>
           )}
         </svg>
+        {hrow && hoverX != null && (
+          <div
+            className="advchart-tip"
+            style={{ left: Math.min(Math.max(hoverX, 96), Math.max(w - 96, 96)) }}
+          >
+            <div className="advchart-tip-time">{fmtT(istDate(hrow.t), range)}</div>
+            {isDay ? (
+              <div className="advchart-tip-price">{fmt(hrow.c)}</div>
+            ) : (
+              <div className="advchart-tip-ohlc">
+                <span>O <b>{fmt(hrow.o)}</b></span>
+                <span>H <b className="up">{fmt(hrow.h)}</b></span>
+                <span>L <b className="down">{fmt(hrow.l)}</b></span>
+                <span>C <b>{fmt(hrow.c)}</b></span>
+              </div>
+            )}
+            <div className="advchart-tip-vol">
+              Vol <b>{hrow.v.toLocaleString('en-IN')}</b>
+              <span className="dim">({fmtCompact(hrow.v)})</span>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="advchart-footer">

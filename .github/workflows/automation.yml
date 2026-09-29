@@ -118,6 +118,12 @@ jobs:
             -o frontend/public/paper/live.json || echo "no live paper state yet"
           curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/paper/learning.json \
             -o frontend/public/paper/learning.json || echo "no bot brain yet"
+          # Data-health artifacts: pre-stage so the force-push below never
+          # wipes them when a step is skipped or fails this run.
+          for f in sectors.json sector-news.json fii-dii.json coverage.json fills.json; do
+            curl -sfL "https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/$f" \
+              -o "frontend/public/$f" || echo "no $f yet"
+          done
 
       - name: Paper live-stop (market hours)
         if: env.MODE == 'news'
@@ -293,6 +299,12 @@ jobs:
             -o frontend/public/paper/live.json || echo "no previous live paper state — first seed run"
           curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/paper/learning.json \
             -o frontend/public/paper/learning.json || echo "no previous bot brain — first seed run"
+          # Data-health artifacts: pre-stage so the force-push below never
+          # wipes them when a step is skipped or fails this run.
+          for f in sectors.json sector-news.json fii-dii.json coverage.json fills.json; do
+            curl -sfL "https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/$f" \
+              -o "frontend/public/$f" || echo "no previous $f — first run"
+          done
 
       # Paper trading: 5 classic strategies on a ₹1,00,000 virtual account,
       # advanced one trading day per run (see scripts/ci/paper.ts).
@@ -390,6 +402,9 @@ jobs:
           git add frontend/public/tv-rank.json 2>/dev/null || true
           git add frontend/public/fii-dii.json 2>/dev/null || true
           git add frontend/public/sector-news.json 2>/dev/null || true
+          git add frontend/public/sectors.json 2>/dev/null || true
+          git add frontend/public/coverage.json 2>/dev/null || true
+          git add frontend/public/fills.json 2>/dev/null || true
           git add frontend/public/paper/ 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "Nothing new to commit"

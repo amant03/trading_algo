@@ -116,7 +116,14 @@ async function main(): Promise<void> {
   for (const [sym, v] of Object.entries(sectorsFile?.sectors ?? {})) {
     if (v?.sector) symSector.set(sym.toUpperCase(), v.sector);
   }
-  if (!symSector.size) throw new Error('sectors.json empty — run sectors.ts first');
+  if (!symSector.size) {
+    // Never fail the workflow over a missing map — publish an empty file so
+    // the UI shows "no data" instead of paging the owner at 3am.
+    mkdirSync(PUB, { recursive: true });
+    writeFileSync(OUT, JSON.stringify({ generatedAt: new Date().toISOString(), sectorCount: 0, sectors: {}, warning: 'sectors.json unavailable — run sectors.ts first' }));
+    console.log('sector-news: sectors map unavailable, wrote empty file');
+    return;
+  }
 
   const newsFile = await loadJson<{ items?: Record<string, Array<{ title?: string; source?: string; url?: string; publishedAt?: string; symbol?: string }>> }>(
     join(PUB, 'news.json'), NEWS_RAW_URL,
