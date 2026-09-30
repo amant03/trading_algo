@@ -76,8 +76,11 @@ export default function StockSearch() {
       setRemote([]);
       return;
     }
+    // Abort the previous keystroke's request: without this, fast typing
+    // piles up overlapping /api/search calls and their resolving setStates.
+    const ctrl = new AbortController();
     const t = setTimeout(() => {
-      fetch(`/api/search?q=${encodeURIComponent(term)}`, { cache: 'no-store' })
+      fetch(`/api/search?q=${encodeURIComponent(term)}`, { cache: 'no-store', signal: ctrl.signal })
         .then((r) => r.json())
         .then((d: { hits?: { symbol: string; name: string; exchange: string }[] }) => {
           setRemote(
@@ -92,7 +95,10 @@ export default function StockSearch() {
         })
         .catch(() => {});
     }, 220);
-    return () => clearTimeout(t);
+    return () => {
+      clearTimeout(t);
+      ctrl.abort();
+    };
   }, [q]);
 
   const reset = () => {

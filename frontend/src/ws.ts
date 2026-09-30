@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { get, post, del } from './api';
+import { get, post, del, fetchWithTimeout } from './api';
 import { NSE_UNIVERSE } from './lib/nse';
 import type { Snapshot, Signal, NewsItem, NewsArticle, Order, Trade, MarketOverview, Instrument, StockAnalysis, Sparkline, UniverseStock } from './types';
 
@@ -248,11 +248,18 @@ async function pollOnce(): Promise<boolean> {
 
 function startPolling(): void {
   if (pollTimer) return;
+  let inFlight = false;
   const tick = async () => {
     if (useLive.getState().mode === 'live') return; // WS took over
-    const ok = await pollOnce();
-    if (!ok && useLive.getState().mode === 'polling') {
-      useLive.getState().setMode('offline');
+    if (inFlight) return; // previous poll still pending — never overlap
+    inFlight = true;
+    try {
+      const ok = await pollOnce();
+      if (!ok && useLive.getState().mode === 'polling') {
+        useLive.getState().setMode('offline');
+      }
+    } finally {
+      inFlight = false;
     }
   };
   void tick();
@@ -329,7 +336,7 @@ export async function refreshSymbols(symbols: string[]): Promise<void> {
   const extra = [...new Set(symbols.map((s) => s.trim().toUpperCase()).filter(Boolean))].slice(0, 24);
   if (!extra.length) return;
   try {
-    const res = await fetch(`/api/live?symbols=${encodeURIComponent(extra.join(','))}`, { cache: 'no-store' });
+    const res = await fetchWithTimeout(`/api/live?symbols=${encodeURIComponent(extra.join(','))}`, { cache: 'no-store' });
     if (!res.ok) return;
     const data = (await res.json()) as { ts: number; quotes: QuoteLike[]; index?: { symbol: string; price: number; changePct: number; timestamp?: number } | null };
     if (!data.quotes?.length) return;
@@ -396,11 +403,14 @@ function isIstSessionNow(): boolean {
 function startRelay(): void {
   if (relayTimer) return;
   seedInstrumentsIfEmpty();
+  let tickInFlight = false;
   const tick = async () => {
     const st = useLive.getState();
     if (st.mode === 'live') return;
+    if (tickInFlight) return; // previous relay call still pending — never overlap
+    tickInFlight = true;
     try {
-      const res = await fetch('/api/live', { cache: 'no-store' });
+      const res = await fetchWithTimeout('/api/live', { cache: 'no-store' });
       if (!res.ok) throw new Error(`relay ${res.status}`);
       const data = (await res.json()) as {
         ts: number;
@@ -420,6 +430,8 @@ function startRelay(): void {
     } catch {
       const live = useLive.getState();
       if (live.mode === 'relay' && Object.keys(live.snapshots).length) live.setMode('snapshot');
+    } finally {
+      tickInFlight = false;
     }
   };
   void tick();
@@ -464,7 +476,7 @@ const NEWS_URLS = [
 async function loadJson<T>(urls: string[]): Promise<T | null> {
   for (const url of urls) {
     try {
-      const res = await fetch(url, { cache: 'no-store' });
+      const res = await fetchWithTimeout(url, { cache: 'no-store' });
       if (!res.ok) continue;
       const ct = res.headers.get('content-type') ?? '';
       if (ct.includes('text/html')) continue;
@@ -526,7 +538,7 @@ export async function fetchRelayNews(symbol?: string): Promise<NewsArticle[]> {
     const path = symbol
       ? `/api/news?symbol=${encodeURIComponent(symbol)}`
       : '/api/news';
-    const res = await fetch(path, { cache: 'no-store' });
+    const res = await fetchWithTimeout(path, { cache: 'no-store' });
     if (!res.ok) return [];
     const data = (await res.json()) as { hits?: Array<{ title?: string; source?: string; url?: string; publishedAt?: string; symbol?: string | null }> };
     const hits: NewsArticle[] = (data.hits ?? [])
@@ -585,7 +597,7 @@ export async function ensureFundamentals(symbols: string[]): Promise<void> {
     for (let i = 0; i < missing.length; i += 8) {
       const batch = missing.slice(i, i + 8);
       try {
-        const res = await fetch(`/api/funda?symbols=${encodeURIComponent(batch.join(','))}`, { cache: 'no-store' });
+        const res = await fetchWithTimeout(`/api/funda?symbols=${encodeURIComponent(batch.join(','))}`, { cache: 'no-store' });
         if (!res.ok) continue;
         const data = (await res.json()) as { stocks?: Record<string, StockAnalysis> };
         if (data?.stocks) useLive.getState().setAnalysis(data.stocks, {});
@@ -640,23 +652,36 @@ function ensureSnapshot(): void {
   snapshotTimer = setInterval(attempt, 30_000);
 }
 
+let liveConnected = false;
+
+/** Boot the live-data feed. Idempotent: reconnects and double-invokes reuse
+ *  the existing timers instead of piling up duplicate intervals (each
+ *  duplicate would add its own 10-min refresh + polling loops and, over a
+ *  long session, storm the network into a frozen tab). */
 export function connectLive() {
-  seedInstrumentsIfEmpty();
-  void loadUniverse();
-  ensureSnapshot();
-  startRelay();
-  void syncWatchlist();
-  void loadAnalysis();
-  void loadNews();
-  setInterval(() => {
-    void loadNews();
+  if (!liveConnected) {
+    liveConnected = true;
+    seedInstrumentsIfEmpty();
+    void loadUniverse();
+    ensureSnapshot();
+    startRelay();
+    void syncWatchlist();
     void loadAnalysis();
-    ensureFundamentals(useLive.getState().watchlist.slice(0, 12));
-  }, 600_000);
-  // watchlist edits trigger on-demand fundamentals for the newly added symbol
-  useLive.subscribe((st, prev) => {
-    if (st.watchlist !== prev.watchlist) void ensureFundamentals(st.watchlist.slice(0, 12));
-  });
+    void loadNews();
+    setInterval(() => {
+      void loadNews();
+      void loadAnalysis();
+      ensureFundamentals(useLive.getState().watchlist.slice(0, 12));
+    }, 600_000);
+    // watchlist edits trigger on-demand fundamentals for the newly added symbol
+    useLive.subscribe((st, prev) => {
+      if (st.watchlist !== prev.watchlist) void ensureFundamentals(st.watchlist.slice(0, 12));
+    });
+  }
+  connectSocket();
+}
+
+function connectSocket() {
 
   const staticHost = import.meta.env.PROD && !import.meta.env.VITE_WS_URL;
   if (staticHost) return;
