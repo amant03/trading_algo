@@ -1,11 +1,13 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useLive } from '../ws';
+import { useAuth } from '../auth';
 import { fmtPct, cls } from '../format';
 import type { Snapshot } from '../types';
 
 export default function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
+  const user = useAuth((s) => s.user);
   const snapshots = useLive((s) => s.snapshots);
   const instruments = useLive((s) => s.instruments);
   const watchlist = useLive((s) => s.watchlist);
@@ -22,26 +24,30 @@ export default function Sidebar() {
 
   return (
     <aside className="sidebar">
-      <div className="side-label">Watchlist</div>
-      {watchlist.length === 0 && (
-        <div className="dim" style={{ fontSize: 12, padding: '0 8px' }}>
-          Nothing yet — use the search bar on top or add from a stock page.
-        </div>
-      )}
-      {watchlist.map((sym) => {
-        const s = snap(sym);
-        return (
-          <div key={sym} className={cls('watch-row', symbol === sym && 'active')} onClick={() => navigate(`/stock/${sym}`)}>
-            <span className="sym">{sym}</span>
-            {s && (
-              <div className="meta">
-                <span className="px">{s.price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                <span className={s.changePct >= 0 ? 'up' : 'down'} style={{ fontSize: 11 }}>{fmtPct(s.changePct)}</span>
+      {user && (
+        <>
+          <div className="side-label">Watchlist</div>
+          {watchlist.length === 0 && (
+            <div className="dim" style={{ fontSize: 12, padding: '0 8px' }}>
+              Nothing yet — use the search bar on top or add from a stock page.
+            </div>
+          )}
+          {watchlist.map((sym) => {
+            const s = snap(sym);
+            return (
+              <div key={sym} className={cls('watch-row', symbol === sym && 'active')} onClick={() => navigate(`/stock/${sym}`)}>
+                <span className="sym">{sym}</span>
+                {s && (
+                  <div className="meta">
+                    <span className="px">{s.price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    <span className={s.changePct >= 0 ? 'up' : 'down'} style={{ fontSize: 11 }}>{fmtPct(s.changePct)}</span>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-        );
-      })}
+            );
+          })}
+        </>
+      )}
 
       <div className="side-label">Top Movers</div>
       {gainers.length === 0 && <div className="dim" style={{ fontSize: 12, padding: '0 8px' }}>Waiting for live/snapshot data…</div>}

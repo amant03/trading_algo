@@ -56,7 +56,7 @@ export default function Topbar() {
         </div>
       </Link>
       <nav className="nav">
-        {NAV.map((n) => (
+        {NAV.filter((n) => user || n.to !== '/watchlist').map((n) => (
           <NavLink key={n.to} to={n.to} end={n.to === '/'} className={({ isActive }) => (isActive ? 'active' : '')}>
             {n.label}
           </NavLink>

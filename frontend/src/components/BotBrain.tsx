@@ -87,7 +87,18 @@ export default function BotBrain() {
         totNet = Math.round((totNet + p.net) * 100) / 100;
       }
     }
-    return { per, totN, totW, totNet, days };
+    // Since tracking began (full memory, not just the window).
+    let allN = 0;
+    let allW = 0;
+    let allNet = 0;
+    for (const d of learn.history) {
+      for (const p of Object.values(d.per ?? {})) {
+        allN += p.n;
+        allW += p.win;
+        allNet = Math.round((allNet + p.net) * 100) / 100;
+      }
+    }
+    return { per, totN, totW, totNet, days, allN, allW, allNet };
   }, [learn]);
 
   if (err) return <div className="empty">{err}</div>;
@@ -96,6 +107,7 @@ export default function BotBrain() {
   const winRate = agg.totN > 0 ? (agg.totW / agg.totN) * 100 : 0;
   const active = Object.entries(learn.strategies).filter(([, s]) => s.status === 'active').length;
   const maxAbs = Math.max(1, ...agg.days.map((d) => Math.abs(Object.values(d.per ?? {}).reduce((a, p) => a + p.net, 0))));
+  const allWr = agg.allN > 0 ? (agg.allW / agg.allN) * 100 : 0;
 
   return (
     <div>
@@ -132,6 +144,9 @@ export default function BotBrain() {
           Every method earns its bucket from its recent expectancy — bleeders get starved then benched, steady winners
           get more capital. A stop-loss cools the method for 6 bars; two stop-outs on one symbol blacklists it for the
           day. Bearish headlines block entries and force exits. Nothing here is a black box — every decision is logged below.
+        </div>
+        <div className="mono muted" style={{ fontSize: 12, marginTop: 8 }}>
+          Since tracking began: <b className={cls(agg.allNet)}>{inr(Math.round(agg.allNet))}</b> net · {agg.allN} round trips · {allWr.toFixed(0)}% win rate
         </div>
       </div>
 

@@ -226,6 +226,65 @@ type SortKey = 'day' | 'time' | 'strategy' | 'symbol' | 'side' | 'qty' | 'price'
 function DailyTradesTable({ trades }: { trades: TradeRow[] }) {
   const [sortKey, setSortKey] = useState<SortKey>('time');
   const [sortAsc, setSortAsc] = useState(false);
+  const [openPm, setOpenPm] = useState<string | null>(null);
+
+  // Pair each exit with its entry (same method/symbol/qty, latest buy at or
+  // before the sell) to reconstruct holding time for the postmortem.
+  const entryOf = (sell: TradeRow): TradeRow | undefined => {
+    const cands = trades.filter(
+      (t) => t.side === 'BUY' && t.strategy === sell.strategy && t.symbol === sell.symbol && t.qty === sell.qty && (t.time ?? '') <= (sell.time ?? ''),
+    );
+    return cands[cands.length - 1];
+  };
+
+  const holdMins = (a?: string, b?: string): number | null => {
+    if (!a || !b) return null;
+    const pa = a.split(':').map(Number);
+    const pb = b.split(':').map(Number);
+    if (pa.length < 2 || pb.length < 2 || pa.some((x) => !isFinite(x)) || pb.some((x) => !isFinite(x))) return null;
+    return (pb[0] * 60 + pb[1]) - (pa[0] * 60 + pa[1]);
+  };
+
+  // WHY this trade lost, HOW it happened, WHAT the bot changes next.
+  const postmortem = (t: TradeRow): { why: string; how: string; next: string } => {
+    const entry = entryOf(t);
+    const hold = holdMins(entry?.time, t.time);
+    const holdTxt = hold != null ? `${hold} min hold` : 'intraday hold';
+    const entryTxt = entry ? `bought ${entry.qty} @ ${inr(entry.price, 2)} (${entry.time ?? '—'})` : 'entry leg not in this ledger';
+    const base = { how: `${entryTxt}, exited ${t.qty} @ ${inr(t.price, 2)} (${t.time ?? '—'}) after ${holdTxt}.` };
+    switch (t.exitClass) {
+      case 'stop-loss':
+        return {
+          why: `Price pierced the 1% hard stop — the loss was capped at ${inr(t.pnl)} (${t.retPct ?? '—'}%) instead of running.`,
+          ...base,
+          next: 'No change needed: this is the guard working. A 2nd stop on this symbol benches it for the day, and repeat red days cut the method\u2019s bucket tonight — track it in Bot Brain.',
+        };
+      case 'news-exit':
+        return {
+          why: `A fresh bearish headline forced the exit to dodge a bigger headline-driven slide.`,
+          ...base,
+          next: 'News-fuse P&L is tracked separately in Bot Brain — if news exits systematically underperform, their influence is dialled down automatically.',
+        };
+      case 'breaker':
+        return {
+          why: `The daily circuit breaker flattened the book once realised losses hit −1.2% — capital protection over hope.`,
+          ...base,
+          next: 'Nothing to fix: the halt did its job. Fresh account, fresh weights tomorrow.',
+        };
+      case 'eod':
+        return {
+          why: `Held to the closing bell per intraday discipline (never overnight) and squared at the close.`,
+          ...base,
+          next: 'Small EOD losses are the cost of the no-overnight rule. If a method bleeds this way repeatedly, its bucket shrinks in Bot Brain.',
+        };
+      default:
+        return {
+          why: `Bearish reversal cut the trade early (${inr(t.pnl)}). Winners get 6 bars of patience, losers get 1 — this one qualified as a loser.`,
+          ...base,
+          next: 'The method logs the red exit into its rolling expectancy; sustained red means bench + parole. See Bot Brain lessons.',
+        };
+    }
+  };
 
   const sorted = useMemo(() => {
     const sells = trades.filter((t) => t.side === 'SELL');
@@ -267,23 +326,49 @@ function DailyTradesTable({ trades }: { trades: TradeRow[] }) {
         <span onClick={() => toggleSort('pnl')} style={{ cursor: 'pointer' }}>P&L{arrow('pnl')}</span>
         <span onClick={() => toggleSort('reason')} style={{ cursor: 'pointer' }}>Why{arrow('reason')}</span>
       </div>
-      {sorted.map((t, i) => (
-        <div key={i} className="tr">
-          <span className="mono muted">{t.time}</span>
-          <span className="muted">{STRAT_META_LABELS.get(t.strategy) ?? t.strategy}</span>
-          <span className="mono">{t.symbol}</span>
-          <span className={t.side === 'BUY' ? 'up' : 'down'}>{t.side}</span>
-          <span className="mono">{t.qty}</span>
-          <span className="mono">{inr(t.price, 2)}</span>
-          <span className={clsPnL(t.pnl)}>{inr(t.pnl)}{t.retPct != null ? ` (${t.retPct >= 0 ? '+' : ''}${t.retPct}%)` : ''}</span>
-          <span className="muted" style={{ fontSize: 12 }}>
-            {t.newsDriven && (
-              <b style={{ color: '#f72585', background: 'rgba(247,37,133,0.12)', borderRadius: 4, padding: '1px 6px', marginRight: 5, fontSize: 10.5 }}>NEWS</b>
+      {sorted.map((t, i) => {
+        const lost = t.side === 'SELL' && t.pnl < -0.004;
+        const pmKey = `${t.time}|${t.strategy}|${t.symbol}|${t.qty}`;
+        const pmOpen = openPm === pmKey;
+        const pm = lost ? postmortem(t) : null;
+        return (
+          <div key={i}>
+            <div className="tr">
+              <span className="mono muted">{t.time}</span>
+              <span className="muted">{STRAT_META_LABELS.get(t.strategy) ?? t.strategy}</span>
+              <span className="mono">{t.symbol}</span>
+              <span className={t.side === 'BUY' ? 'up' : 'down'}>{t.side}</span>
+              <span className="mono">{t.qty}</span>
+              <span className="mono">{inr(t.price, 2)}</span>
+              <span className={clsPnL(t.pnl)}>
+                {inr(t.pnl)}{t.retPct != null ? ` (${t.retPct >= 0 ? '+' : ''}${t.retPct}%)` : ''}
+                {pm && (
+                  <button
+                    className="btn"
+                    style={{ marginLeft: 6, padding: '1px 8px', fontSize: 10.5 }}
+                    onClick={() => setOpenPm(pmOpen ? null : pmKey)}
+                  >
+                    why? {pmOpen ? '▾' : '▸'}
+                  </button>
+                )}
+              </span>
+              <span className="muted" style={{ fontSize: 12 }}>
+                {t.newsDriven && (
+                  <b style={{ color: '#f72585', background: 'rgba(247,37,133,0.12)', borderRadius: 4, padding: '1px 6px', marginRight: 5, fontSize: 10.5 }}>NEWS</b>
+                )}
+                {t.reason}
+              </span>
+            </div>
+            {pm && pmOpen && (
+              <div style={{ borderLeft: '2px solid rgba(255,92,92,0.4)', margin: '2px 0 8px 8px', padding: '8px 12px', background: 'rgba(255,92,92,0.04)', borderRadius: '0 8px 8px 0', fontSize: 12, lineHeight: 1.6 }}>
+                <div><b className="down">WHY it lost:</b> <span className="muted">{pm.why}</span></div>
+                <div><b>HOW it happened:</b> <span className="muted">{pm.how}</span></div>
+                <div><b style={{ color: 'var(--cyan)' }}>WHAT NEXT:</b> <span className="muted">{pm.next}</span></div>
+              </div>
             )}
-            {t.reason}
-          </span>
-        </div>
-      ))}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -508,7 +593,7 @@ export default function Paper() {
             <div className="panel-title">
               <h3>Daily Paper trade</h3>
               <span className="hint">
-                fresh ₹1,00,000 · 5 methods · intraday 5-min bars
+                fresh ₹1,00,000 · 7 adaptive methods · news-aware · self-improving
                 {d.status === 'open' && ' · market open'}
                 {d.status === 'closed' && ' · session closed'}
                 {d.status === 'holiday' && ' · no session today'}
