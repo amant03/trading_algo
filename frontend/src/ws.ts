@@ -489,7 +489,17 @@ async function loadJson<T>(urls: string[]): Promise<T | null> {
   return null;
 }
 
+let newsInflight: Promise<boolean> | null = null;
+
 async function loadNews(): Promise<boolean> {
+  if (newsInflight) return newsInflight;
+  newsInflight = loadNewsOnce().finally(() => {
+    newsInflight = null;
+  });
+  return newsInflight;
+}
+
+async function loadNewsOnce(): Promise<boolean> {
   const data = await loadJson<{ generatedAt?: string; items?: Record<string, NewsArticle[]> }>(NEWS_URLS);
   if (data?.items) {
     const live = useLive.getState();
@@ -558,7 +568,17 @@ export async function fetchRelayNews(symbol?: string): Promise<NewsArticle[]> {
   }
 }
 
+let analysisInflight: Promise<boolean> | null = null;
+
 async function loadAnalysis(): Promise<boolean> {
+  if (analysisInflight) return analysisInflight;
+  analysisInflight = loadAnalysisOnce().finally(() => {
+    analysisInflight = null;
+  });
+  return analysisInflight;
+}
+
+async function loadAnalysisOnce(): Promise<boolean> {
   const data = await loadJson<{
     stocks?: Record<string, StockAnalysis>;
     sparklines?: Record<string, Sparkline>;

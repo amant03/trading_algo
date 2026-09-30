@@ -12,6 +12,7 @@ coverage/
 .infra/
 frontend/node_modules/
 frontend/dist/
+frontend/public/sig/
 keyring/
 *.pem
 *.pfx

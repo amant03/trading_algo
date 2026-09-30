@@ -1,6 +1,6 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { get } from '../api';
+import { fetchWithTimeout, get } from '../api';
 import { useLive, refreshSymbols, fetchRelayNews, ensureFundamentals } from '../ws';
 import { fmt, fmtPct, fmtCompact, fmtMoney, cls } from '../format';
 import { useToast } from '../components/Toasts';
@@ -63,29 +63,37 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'news', label: 'News', icon: '✉' },
 ];
 
-const SIGNALS_URLS = [
-  'https://cdn.jsdelivr.net/gh/amant03/trading_algo@automation-data/frontend/public/signals.json',
-  'https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/signals.json',
-  'https://raw.githubusercontent.com/amant03/trading_algo/main/frontend/public/signals.json',
-];
+const signalsCache = new Map<string, Signal[]>();
+const signalsInflight = new Map<string, Promise<Signal[]>>();
 
-let signalsCache: Record<string, Signal[]> | null = null;
-
+/** One symbol file (~tens of KB). Never the full signals.json — parsing that
+ *  11MB document on the main thread is what was crashing the tab. */
 async function loadSignalsFromJson(symbol: string): Promise<Signal[]> {
-  if (signalsCache) {
-    return signalsCache[symbol] ?? [];
-  }
-  for (const url of SIGNALS_URLS) {
+  const key = symbol.trim().toUpperCase();
+  if (!key) return [];
+  const hit = signalsCache.get(key);
+  if (hit) return hit;
+  const pending = signalsInflight.get(key);
+  if (pending) return pending;
+  const task = (async () => {
+    const file = `${encodeURIComponent(key)}.json`;
     try {
-      const res = await fetch(url, { cache: 'no-store' });
-      if (!res.ok) continue;
-      const json = (await res.json()) as { data?: Record<string, Signal[]> };
-      signalsCache = json?.data ?? {};
-      return signalsCache[symbol] ?? [];
-    } catch { /* try next */ }
-  }
-  signalsCache = {};
-  return [];
+      const res = await fetchWithTimeout(`/sig/${file}`, {}, 8000);
+      if (!res.ok) return [];
+      const ct = res.headers.get('content-type') ?? '';
+      if (ct.includes('text/html')) return [];
+      const json = (await res.json()) as { signals?: Signal[] };
+      const rows = Array.isArray(json?.signals) ? json.signals : [];
+      signalsCache.set(key, rows);
+      return rows;
+    } catch {
+      return [];
+    }
+  })().finally(() => {
+    signalsInflight.delete(key);
+  });
+  signalsInflight.set(key, task);
+  return task;
 }
 
 function VerdictBar({ mid, low, high, price }: { mid: number; low: number; high: number; price: number }) {
@@ -497,12 +505,12 @@ export default function Stock() {
         if (apiSignals.length) {
           setSignals(apiSignals);
         } else {
-          // API returned empty — try signals.json from automation-data
+          // API returned empty — one symbol file, never the full history dump
           loadSignalsFromJson(upper).then(setSignals).catch(() => {});
         }
       })
       .catch(() => {
-        // API 404 (stock not in DB) — try signals.json
+        // API 404 on the static host — one symbol file, never the full history dump
         loadSignalsFromJson(upper).then(setSignals).catch(() => {});
       });
     get<NewsItem[]>(`/api/instruments/${upper}/news?limit=12`)

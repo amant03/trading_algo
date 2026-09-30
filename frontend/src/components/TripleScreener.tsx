@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLive } from '../ws';
 import { fmt, cls } from '../format';
@@ -35,15 +35,22 @@ function ScreenMark({ label, score, grade }: { label: string; score: number; gra
   );
 }
 
+const PAGE = 40;
+
+function LivePrice({ symbol, fallback }: { symbol: string; fallback: number }) {
+  const price = useLive((s) => s.snapshots[symbol]?.price);
+  return <>{fmt(price && price > 0 ? price : fallback)}</>;
+}
+
 export default function TripleScreener() {
   const navigate = useNavigate();
   const fundamentals = useLive((s) => s.fundamentals);
-  const snapshots = useLive((s) => s.snapshots);
   const universeList = useLive((s) => s.universe);
   const [preset, setPreset] = useState<Preset>('high');
   const [q, setQ] = useState('');
   const [sector, setSector] = useState('all');
   const [cap, setCap] = useState<'all' | 'large' | 'mid' | 'small'>('all');
+  const [limit, setLimit] = useState(PAGE);
 
   const capOf = useMemo(() => {
     const m = new Map<string, string>();
@@ -93,6 +100,11 @@ export default function TripleScreener() {
   }, [universe, min, sector, needle, cap, capOf]);
 
   const presetMeta = PRESETS.find((p) => p.id === preset)!;
+  const visible = rows.slice(0, limit);
+
+  useEffect(() => {
+    setLimit(PAGE);
+  }, [preset, sector, cap, needle]);
 
   return (
     <div className="panel reveal reveal-1 ts-panel" style={{ marginBottom: 16 }}>
@@ -154,9 +166,7 @@ export default function TripleScreener() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((p) => {
-                const live = snapshots[p.symbol]?.price;
-                const price = live && live > 0 ? live : p.price;
+              {visible.map((p) => {
                 const ratingColor =
                   p.verdict.rating === 'Strong Buy' || p.verdict.rating === 'Buy'
                     ? 'var(--up)'
@@ -175,7 +185,7 @@ export default function TripleScreener() {
                     <td className="mono">
                       <b className={scoreTone(p.floor)}>{p.floor}</b>
                     </td>
-                    <td className="mono">{fmt(price)}</td>
+                    <td className="mono"><LivePrice symbol={p.symbol} fallback={p.price} /></td>
                     <td className="mono">{fmt(p.verdict.fairValueMid)}</td>
                     <td className={cls('mono', p.verdict.marginOfSafety >= 0 ? 'up' : 'down')}>
                       {p.verdict.marginOfSafety > 0 ? '+' : ''}{p.verdict.marginOfSafety}%
@@ -196,6 +206,11 @@ export default function TripleScreener() {
             ? `No names with blended score ${presetMeta.label} (≥${min})${sector !== 'all' ? ` in ${sector}` : ''}. Try Solid, or clear the sector filter.`
             : 'Analyst screens load with the nightly coverage file — they will appear here once analysis.json is in.'}
         </div>
+      )}
+      {visible.length < rows.length && (
+        <button type="button" className="ts-more" onClick={() => setLimit((n) => n + PAGE)}>
+          Show {Math.min(PAGE, rows.length - visible.length)} more · {rows.length - visible.length} hidden
+        </button>
       )}
       {rows.length > 0 && (
         <div className="hint" style={{ padding: '8px 4px 0', lineHeight: 1.55 }}>

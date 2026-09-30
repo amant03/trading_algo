@@ -7,10 +7,10 @@ export function Sparkline({ points, width = 90, height = 28, up = true }: { poin
   const d = points
     .map((p, i) => `${i === 0 ? 'M' : 'L'}${(i * stepX).toFixed(1)},${(height - 3 - ((p - min) / range) * (height - 6)).toFixed(1)}`)
     .join(' ');
-  const color = up ? '#00d68f' : '#ff5c5c';
+  const color = up ? 'var(--up)' : 'var(--down)';
   return (
     <svg width={width} height={height} style={{ display: 'block' }}>
-      <path d={d} fill="none" stroke={color} strokeWidth={1.4} strokeLinejoin="round" strokeLinecap="round" opacity={0.85} />
+      <path d={d} fill="none" strokeWidth={1.6} strokeLinejoin="round" strokeLinecap="round" style={{ stroke: color }} />
     </svg>
   );
 }

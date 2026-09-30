@@ -9,7 +9,7 @@ export default function Ticker() {
   const [items, setItems] = useState<Snapshot[]>([]);
 
   useEffect(() => {
-    const list = Object.values(snapshots);
+    const list = Object.values(snapshots).slice(0, 32);
     if (list.length) setItems(list);
   }, [snapshots]);
 

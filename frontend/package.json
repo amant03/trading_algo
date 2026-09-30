@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "node scripts/split-signals.mjs",
     "dev": "vite",
+    "prebuild": "node scripts/split-signals.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
   },
