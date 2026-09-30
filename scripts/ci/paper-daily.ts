@@ -48,10 +48,13 @@ const TRAIL_GIVEBACK_PCT = 0.01; // ...then gives back at most 1% from the high
 const COOLDOWN_BARS = 6; // sit out 6 bars after a stop-loss
 const AVOID_STOPS = 2; // two stop-outs on a symbol = avoid it rest of day
 const DRIFT_GATE_PCT = 0.0; // longs only in names UP on the day — no catching falling knives, ever
+const REGIME_MIN_PCT = -0.3; // market-regime fuse: NIFTY itself down worse than this → no new longs market-wide
 const RSI_CEIL = 68; // never chase overbought: RSI above this blocks entries (FOMO filter)
 const VOL_MULT = 1.0; // entry bar volume must beat its 10-bar average (real participation, not noise)
 const CONFIRM_BARS = 2; // reserved: signal freshness window (signals evaluate live per bar, so recency is structural)
-const MIN_HOLD_BARS = 3; // no signal-exit within 3 bars of entry — stops churn, lets TP work (SL/TP/news always live)
+const MIN_HOLD_BARS = 3; // baseline patience vs signal-exit churn
+const MIN_HOLD_WINNERS = 6; // green positions get room to reach TP/ratchet…
+const MIN_HOLD_LOSERS = 1; // …red positions are cut at the first bearish signal (SL still caps the worst case)
 const DAILY_STOP_PCT = 0.012; // daily circuit breaker: halt new entries at -1.2% realised
 const NEWS_FRESH_MS = 18 * 60 * 60_000; // headlines count for 18h (covers overnight news)
 const LEARN_WINDOW = 10; // rolling sessions of memory
@@ -166,6 +169,15 @@ const dayOf = (ts: number): string =>
 const timeOf = (ts: number): string =>
   new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false })
     .format(new Date(ts));
+
+const minutesOf = (ts: number): number => {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(new Date(ts));
+  const h = Number(parts.find((p) => p.type === 'hour')?.value ?? 0);
+  const m = Number(parts.find((p) => p.type === 'minute')?.value ?? 0);
+  return h * 60 + m;
+};
 
 function loadStore(): Store {
   const fresh: Store = { ts: new Date().toISOString(), today: null, days: [] };
@@ -328,10 +340,12 @@ interface LearnRuntime {
   cooldown: Map<string, number>; // strategy -> bars left to sit out
   avoid: Map<string, number>; // "strat|sym" -> stop-outs today
   avoidEvents: string[];
-  skips: { trend: number; news: number; cooldown: number; avoid: number; paused: number; drift: number; breaker: number; chase: number; thin: number; unconfirmed: number };
+  skips: { trend: number; news: number; cooldown: number; avoid: number; paused: number; drift: number; breaker: number; chase: number; thin: number; unconfirmed: number; regime: number };
   newsDay: { actions: number; net: number; blocked: number };
   halted: boolean; // daily circuit breaker tripped — no new entries
   exitMix: Record<string, number>;
+  nifty: Map<number, number>; // bar ts -> NIFTY close (market-regime fuse)
+  niftyOpen: number; // NIFTY session open for drift math
 }
 
 function freshLearn(): LearnState {
@@ -482,7 +496,7 @@ function refreshBrain(learn: LearnState, date: string): string[] {
 
 // Per-replay mutable learning context (fresh maps each trading day).
 // (Interface declared near LearnState above.)
-function makeRuntime(learn: LearnState, news: Map<string, NewsItem[]>): LearnRuntime {
+function makeRuntime(learn: LearnState, news: Map<string, NewsItem[]>, nifty?: { bars: Map<number, number>; open: number }): LearnRuntime {
   return {
     weights: Object.fromEntries(STRATEGIES.map((s) => [s.id, learn.strategies[s.id]?.weight ?? 1])),
     paused: new Set(STRATEGIES.filter((s) => learn.strategies[s.id]?.status === 'paused').map((s) => s.id)),
@@ -490,11 +504,25 @@ function makeRuntime(learn: LearnState, news: Map<string, NewsItem[]>): LearnRun
     cooldown: new Map(),
     avoid: new Map(),
     avoidEvents: [],
-    skips: { trend: 0, news: 0, cooldown: 0, avoid: 0, paused: 0, drift: 0, breaker: 0, chase: 0, thin: 0, unconfirmed: 0 },
+    skips: { trend: 0, news: 0, cooldown: 0, avoid: 0, paused: 0, drift: 0, breaker: 0, chase: 0, thin: 0, unconfirmed: 0, regime: 0 },
     newsDay: { actions: 0, net: 0, blocked: 0 },
     halted: false,
     exitMix: {},
+    nifty: nifty?.bars ?? new Map(),
+    niftyOpen: nifty?.open ?? 0,
   };
+}
+
+/** NIFTY session drift at a bar: negative = red market, longs stand down. */
+function niftyDriftAt(rt: LearnRuntime, barTs: number): number | null {
+  if (rt.niftyOpen <= 0 || rt.nifty.size === 0) return null;
+  let px: number | undefined;
+  for (let t = barTs; t >= barTs - 20 * 60_000; t -= 60_000) {
+    px = rt.nifty.get(t);
+    if (px != null) break;
+  }
+  if (px == null) return null;
+  return ((px / rt.niftyOpen) - 1) * 100;
 }
 
 /**
@@ -541,10 +569,10 @@ function updateLearning(learn: LearnState, date: string, dayTrades: Trade[], rt:
       `News fuse fired ${rt.newsDay.actions}× (net ${rt.newsDay.net >= 0 ? '+' : ''}₹${Math.round(rt.newsDay.net)}) and blocked ${rt.newsDay.blocked} entries on bearish headlines.`,
     );
   }
-  const skipTotal = rt.skips.trend + rt.skips.cooldown + rt.skips.avoid + rt.skips.paused + rt.skips.drift + rt.skips.breaker + rt.skips.chase + rt.skips.thin + rt.skips.unconfirmed;
+  const skipTotal = rt.skips.trend + rt.skips.cooldown + rt.skips.avoid + rt.skips.paused + rt.skips.drift + rt.skips.breaker + rt.skips.chase + rt.skips.thin + rt.skips.unconfirmed + rt.skips.regime;
   if (skipTotal > 0) {
     lessons.push(
-      `Selectiveness — skipped ${skipTotal} entries (trend ${rt.skips.trend}, drift ${rt.skips.drift}, chase ${rt.skips.chase}, thin-vol ${rt.skips.thin}, unconfirmed ${rt.skips.unconfirmed}, cooldown ${rt.skips.cooldown}, avoid-list ${rt.skips.avoid}, benched ${rt.skips.paused}, breaker ${rt.skips.breaker}). Fewer, better trades.`,
+      `Selectiveness — skipped ${skipTotal} entries (regime ${rt.skips.regime}, trend ${rt.skips.trend}, drift ${rt.skips.drift}, chase ${rt.skips.chase}, thin-vol ${rt.skips.thin}, unconfirmed ${rt.skips.unconfirmed}, cooldown ${rt.skips.cooldown}, avoid-list ${rt.skips.avoid}, benched ${rt.skips.paused}, breaker ${rt.skips.breaker}). Fewer, better trades.`,
     );
   }
   if (rt.halted) {
@@ -555,8 +583,42 @@ function updateLearning(learn: LearnState, date: string, dayTrades: Trade[], rt:
   return lessons;
 }
 
-async function intradayBars(symbol: string, range = '1d'): Promise<{ bars: Bar[]; live: number | null } | null> {
+/** NIFTY 50 5m bars for the regime fuse, grouped per session date. */
+async function fetchNifty(range: string): Promise<Map<string, { bars: Map<number, number>; open: number }>> {
+  const out = new Map<string, { bars: Map<number, number>; open: number }>();
   try {
+    const res = await fetch(
+      `https://query1.finance.yahoo.com/v8/finance/chart/%5ENSEI?interval=5m&range=${range}`,
+      { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15_000) },
+    );
+    if (!res.ok) return out;
+    const j = (await res.json()) as {
+      chart?: { result?: Array<{ timestamp?: number[]; indicators?: { quote?: Array<{ close?: (number | null)[] }> } }> };
+    };
+    const r = j.chart?.result?.[0];
+    const ts = r?.timestamp ?? [];
+    const cl = r?.indicators?.quote?.[0]?.close ?? [];
+    for (let i = 0; i < ts.length; i++) {
+      const c = cl[i];
+      if (typeof c !== 'number' || !isFinite(c) || c <= 0) continue;
+      const ms = ts[i] * 1000;
+      const hm = minutesOf(ms);
+      if (hm < 555 || hm > 930) continue;
+      const d = dayOf(ms);
+      let e = out.get(d);
+      if (!e) {
+        e = { bars: new Map(), open: c };
+        out.set(d, e);
+      }
+      e.bars.set(ms, c);
+    }
+  } catch {
+    // regime fuse stays inactive without NIFTY data
+  }
+  return out;
+}
+
+async function intradayBars(symbol: string, range = '1d'): Promise<{ bars: Bar[]; live: number | null } | null> {  try {
     const res = await fetch(
       `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}.NS?interval=5m&range=${range}`,
       { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15_000) },
@@ -844,9 +906,11 @@ function replayDay(
           newsDriven = true;
           reason = `NEWS exit on fresh bearish headline — "${newsNow.bearish[0].title.slice(0, 90)}"`;
         } else if (sig?.dir === 'SELL') {
-          // Minimum hold: never let a one-bar flicker shake a fresh entry.
+          // Asymmetric patience: green positions get room (winners must
+          // reach TP/ratchet), red positions are cut at the first warning.
           // Protection exits (SL/TP/ratchet/news) stay live from bar one.
-          if (i - pos.entryIdx >= MIN_HOLD_BARS) {
+          const holdNeed = bar.c >= pos.entryPrice ? MIN_HOLD_WINNERS : MIN_HOLD_LOSERS;
+          if (i - pos.entryIdx >= holdNeed) {
             exitPrice = bar.c;
             exitClass = 'signal-exit';
             reason = `Bearish exit signal — ${sig.why}`;
@@ -899,8 +963,16 @@ function replayDay(
           // fire exactly once by construction, so that test would be
           // impossible and block every entry. Freshness is structural: the
           // signal is evaluated live on this bar. Anti-chase duty belongs to
-          // the trend / drift / RSI-ceiling / volume gates below (evaluated
-          // only for live signals, so skip counters stay honest).
+          // the trend / drift / RSI-ceiling / volume gates below.
+          // Market-regime fuse: when NIFTY itself is down badly, intraday
+          // longs fail as a group — stand down market-wide.
+          if (learn) {
+            const regime = niftyDriftAt(learn, bar.ts);
+            if (regime != null && regime < REGIME_MIN_PCT) {
+              learn.skips.regime += 1;
+              continue;
+            }
+          }
           // Session-drift gate: don't start new longs in a name already down
           // badly on the day — falling knives bleed win rate.
           if (learn && bars[0].o > 0) {
@@ -1124,8 +1196,9 @@ async function main(): Promise<void> {
     };
   } else {
     // The live brain trades today: weighted buckets, benched losers sit out,
-    // news fuses with technicals.
-    const rt = makeRuntime(learning, news);
+    // news fuses with technicals, NIFTY regime gates entries.
+    const niftyToday = (await fetchNifty(fetchRange)).get(todayIST);
+    const rt = makeRuntime(learning, news, niftyToday);
     store.today = replayDay(todayIST, universe, liveBy, dayComplete, rt);
     const lessons = updateLearning(learning, todayIST, store.today.trades, rt);
     const actStrats = STRATEGIES.filter((s) => learning.strategies[s.id]?.status === 'active').map((s) => s.id);
@@ -1235,8 +1308,9 @@ async function seedLearning(
     .slice(-need);
 
   const liveBy = new Map<string, number | null>();
+  const niftyWide = await fetchNifty('1mo');
   for (const d of dates) {
-    const rt = makeRuntime(learning, news);
+    const rt = makeRuntime(learning, news, niftyWide.get(d));
     const day = replayDay(d, wide, liveBy, true, rt);
     const lessons = updateLearning(learning, d, day.trades, rt);
     const wr = day.wins + day.losses > 0 ? Math.round((day.wins / (day.wins + day.losses)) * 100) : 0;
