@@ -675,7 +675,6 @@ export default function Stock() {
                     <GradeBadge grade={verdict?.grade ?? 'C'} />
                     <span className="mono dim" style={{ fontSize: 13, fontWeight: 700, marginLeft: 'auto' }}>{verdict?.score}/100</span>
                   </div>
-                  <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.55, marginBottom: 6 }}>{verdict?.summary}</div>
                   {verdict && <VerdictBar mid={verdict.fairValueMid} low={verdict.fairValueLow} high={verdict.fairValueHigh} price={analysis.price} />}
                   <div className="dual-verdict">
                     <div className="dv-card">
@@ -693,10 +692,10 @@ export default function Stock() {
                       <div className="dv-why">{analysis?.opinion?.thesis ?? verdict?.summary ?? 'Long-term screen pending.'}</div>
                     </div>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10 }}>
-                    <ScreenInline grade={analysis.screens.buffett.grade} label="Buffett" score={analysis.screens.buffett.score} />
-                    <ScreenInline grade={analysis.screens.lynch.grade} label="Lynch" score={analysis.screens.lynch.score} />
-                    <ScreenInline grade={analysis.screens.graham.grade} label="Graham" score={analysis.screens.graham.score} />
+                  <div style={{ borderTop: '1px solid var(--line)', marginTop: 12, paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 14 }}>
+                    <WhyScreen icon="🧊" name="Buffett" result={analysis.screens.buffett} />
+                    <WhyScreen icon="⚡" name="Lynch" result={analysis.screens.lynch} />
+                    <WhyScreen icon="🛡" name="Graham" result={analysis.screens.graham} />
                   </div>
                 </div>
               ) : (
@@ -705,9 +704,8 @@ export default function Stock() {
             </div>
           </div>
 
-          <div className="grid-2" style={{ marginBottom: 16 }}>
-            <div className="panel reveal">
-              <div className="panel-title"><h3>Signal history — {upper}</h3><span className="hint">algorithm engine</span></div>
+          <div className="panel reveal" style={{ marginBottom: 16 }}>
+            <div className="panel-title"><h3>Signal history — {upper}</h3><span className="hint">algorithm engine</span></div>
               <div style={{ maxHeight: 300, overflowY: 'auto' }}>
                 <div className="feed">
                   {signals.map((s) => (
@@ -726,20 +724,6 @@ export default function Stock() {
                   {!signals.length && <div className="empty">No signals yet for {upper}.</div>}
                 </div>
               </div>
-            </div>
-
-            <div className="panel reveal reveal-1">
-              <div className="panel-title"><h3>Why this rating</h3><span className="hint">rule-based, reproducible</span></div>
-              {analysis ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  <WhyScreen icon="🧊" name="Buffett" result={analysis.screens.buffett} />
-                  <WhyScreen icon="⚡" name="Lynch" result={analysis.screens.lynch} />
-                  <WhyScreen icon="🛡" name="Graham" result={analysis.screens.graham} />
-                </div>
-              ) : (
-                <div className="empty">No screens yet.</div>
-              )}
-            </div>
           </div>
 
           <CompetitionPanel symbol={upper} peers={peerList} onContext={(q) => { setAiPrompt(q); setTab('ai'); }} />

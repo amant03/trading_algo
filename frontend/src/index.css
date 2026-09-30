@@ -439,6 +439,12 @@ h3 { font-size: 15px; }
   .grid-2, .grid-3, .grid-2-1 { grid-template-columns: 1fr; }
 }
 
+@media (max-width: 1400px) {
+  .topbar { flex-wrap: wrap; row-gap: 10px; }
+  .nav { order: 3; width: 100%; margin-left: 0; overflow-x: auto; padding-bottom: 2px; }
+  .topbar-right { margin-left: auto; }
+}
+
 /* ---------- tables ---------- */
 .table-wrap {
   overflow-x: auto;
@@ -955,6 +961,7 @@ a.news-headline:hover { color: var(--cyan); }
   gap: 8px;
   border-bottom: 1px solid var(--line);
   margin-bottom: 22px;
+  overflow-x: auto;
 }
 .tabs button {
   position: relative;
@@ -967,6 +974,8 @@ a.news-headline:hover { color: var(--cyan); }
   padding: 10px 16px;
   cursor: pointer;
   transition: color 0.14s ease;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .tabs button:hover { color: var(--text); }
 .tabs button.active { color: var(--cyan); }
