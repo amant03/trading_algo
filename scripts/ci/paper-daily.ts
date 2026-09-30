@@ -50,7 +50,7 @@ const AVOID_STOPS = 2; // two stop-outs on a symbol = avoid it rest of day
 const DRIFT_GATE_PCT = 0.0; // longs only in names UP on the day — no catching falling knives, ever
 const RSI_CEIL = 68; // never chase overbought: RSI above this blocks entries (FOMO filter)
 const VOL_MULT = 1.0; // entry bar volume must beat its 10-bar average (real participation, not noise)
-const CONFIRM_BARS = 2; // a signal must persist 2 consecutive bars — one-bar flickers are ignored
+const CONFIRM_BARS = 2; // reserved: signal freshness window (signals evaluate live per bar, so recency is structural)
 const MIN_HOLD_BARS = 3; // no signal-exit within 3 bars of entry — stops churn, lets TP work (SL/TP/news always live)
 const DAILY_STOP_PCT = 0.012; // daily circuit breaker: halt new entries at -1.2% realised
 const NEWS_FRESH_MS = 18 * 60 * 60_000; // headlines count for 18h (covers overnight news)
@@ -893,6 +893,14 @@ function replayDay(
             continue;
           }
           const bar = bars[i];
+          const sig = signalFor(strat.id, bars.slice(0, i + 1));
+          if (sig?.dir !== 'BUY') continue;
+          // NOTE: no "confirm on previous bar" gate here — crossover signals
+          // fire exactly once by construction, so that test would be
+          // impossible and block every entry. Freshness is structural: the
+          // signal is evaluated live on this bar. Anti-chase duty belongs to
+          // the trend / drift / RSI-ceiling / volume gates below (evaluated
+          // only for live signals, so skip counters stay honest).
           // Session-drift gate: don't start new longs in a name already down
           // badly on the day — falling knives bleed win rate.
           if (learn && bars[0].o > 0) {
@@ -902,18 +910,6 @@ function replayDay(
               continue;
             }
           }
-          const sig = signalFor(strat.id, bars.slice(0, i + 1));
-          if (sig?.dir !== 'BUY') continue;
-          // Confirmation: the same signal must also have fired on the
-          // previous bar — one-bar flickers are ignored.
-          if (i >= 1) {
-            const prevSig = signalFor(strat.id, bars.slice(0, i));
-            if (prevSig?.dir !== 'BUY') {
-              if (learn) learn.skips.unconfirmed += 1;
-              continue;
-            }
-          }
-          // Trend confluence: never buy a falling knife. Close must hold
           // above SMA20 (or the session open while SMA20 warms up).
           if (learn) {
             const closes = bars.slice(0, i + 1).map((b) => b.c);
@@ -1038,7 +1034,10 @@ function replayDay(
 // ---- main -------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  const todayIST = dayOf(Date.now());
+  // PAPER_DAILY_DATE=YYYY-MM-DD replays a specific session (manual
+  // backfills, repairs). Defaults to today in IST.
+  const override = process.env.PAPER_DAILY_DATE ?? '';
+  const todayIST = /^\d{4}-\d{2}-\d{2}$/.test(override) ? override : dayOf(Date.now());
   const store = loadStore();
   const learning = loadLearn();
   const news = await loadNews();
@@ -1058,6 +1057,9 @@ async function main(): Promise<void> {
     .map((s) => s.trim().toUpperCase())
     .filter(Boolean);
 
+  // Past-date replays need a wider fetch window than today's session.
+  const fetchRange = todayIST !== dayOf(Date.now()) ? '1mo' : '1d';
+
   let cursor = 0;
   const fetched: { symbol: string; bars: Bar[]; live: number | null }[] = [];
   const worker = async () => {
@@ -1066,7 +1068,7 @@ async function main(): Promise<void> {
       cursor += 1;
       if (idx >= symbols.length) return;
       const symbol = symbols[idx];
-      const data = await intradayBars(symbol);
+      const data = await intradayBars(symbol, fetchRange);
       if (data) fetched.push({ symbol, bars: data.bars, live: data.live });
     }
   };
