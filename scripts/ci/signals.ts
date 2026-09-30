@@ -355,9 +355,12 @@ async function main(): Promise<void> {
   };
   await Promise.all(Array.from({ length: Math.min(POOL_SIZE, universe.length) }, worker));
 
-  // Generate signals for each fetched symbol
+  // Generate signals for each fetched symbol (capped per symbol so the
+  // file can't grow without bound as history lengthens).
   for (const [sym, bars] of fetched) {
-    const sigs = generateSignals(sym, bars);
+    const sigs = generateSignals(sym, bars)
+      .sort((a, b) => (a.ts < b.ts ? 1 : -1))
+      .slice(0, 120);
     if (sigs.length) {
       result[sym] = sigs;
       withSignals += 1;
@@ -369,9 +372,10 @@ async function main(): Promise<void> {
   // Carry forward symbols we didn't fetch (e.g., BSE-only) from previous run
   for (const [sym, sigs] of Object.entries(existing)) {
     if (!result[sym] && sigs.length) {
-      result[sym] = sigs;
+      const kept = sigs.slice(0, 120);
+      result[sym] = kept;
       withSignals += 1;
-      totalSignals += sigs.length;
+      totalSignals += kept.length;
     }
   }
 
