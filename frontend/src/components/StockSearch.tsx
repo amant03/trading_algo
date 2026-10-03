@@ -113,6 +113,19 @@ export default function StockSearch() {
     navigate(`/stock/${sym}`);
   };
 
+  // Ctrl+K / Cmd+K focuses search from anywhere (standard command-palette key).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        box.current?.focus();
+        box.current?.select();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') { reset(); box.current?.blur(); }
     else if (e.key === 'ArrowDown' && results.length) {
@@ -145,9 +158,10 @@ export default function StockSearch() {
           setHi(0);
         }}
         onFocus={() => setOpen(true)}
-        onBlur={() => setOpen(false)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
         onKeyDown={onKey}
       />
+      {!q && <span className="search-kbd" title="Focus search">Ctrl K</span>}
       {open && q.trim() ? (
         <div className="search-results">
           {results.length === 0 && <div className="search-empty">No match in the listed universe — press Enter to open {q.trim().toUpperCase()}</div>}

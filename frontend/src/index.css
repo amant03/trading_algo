@@ -1052,10 +1052,26 @@ a.news-headline:hover { color: var(--cyan); }
   border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--fg);
-  padding: 7px 10px 7px 30px;
+  padding: 7px 52px 7px 30px;
   font-size: 13px;
   outline: none;
   transition: border-color 0.15s;
+}
+
+.search-kbd {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--dim);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 6px;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.03);
+  white-space: nowrap;
 }
 
 .search-input::placeholder {

@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { ImpactBadge, SentimentBadge } from './Badge';
 import { timeAgo } from '../format';
+import { classifySentiment } from '../lib/sentiment';
 import type { NewsItem } from '../types';
 
 export default function NewsFeed({ items, limit = 15 }: { items: NewsItem[]; limit?: number }) {
@@ -10,6 +11,9 @@ export default function NewsFeed({ items, limit = 15 }: { items: NewsItem[]; lim
     <div className="feed">
       {items.slice(0, limit).map((n) => {
         const real = Boolean(n.url);
+        // Google News items carry no backend sentiment — classify the
+        // headline with the same engine the trading bot uses.
+        const sentiment = real ? classifySentiment(n.headline) : n.sentiment;
         return (
           <div key={n.id} className="news-item">
             <div className="news-head">
@@ -25,8 +29,8 @@ export default function NewsFeed({ items, limit = 15 }: { items: NewsItem[]; lim
                   {n.symbol}
                 </span>
               ) : null}
+              <SentimentBadge sentiment={sentiment} />
               {!real && <ImpactBadge impact={n.impact} />}
-              {!real && <SentimentBadge sentiment={n.sentiment} />}
             </div>
             {n.url ? (
               <a className="news-headline" href={n.url} target="_blank" rel="noopener noreferrer">

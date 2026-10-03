@@ -6,6 +6,7 @@ import type { Instrument, Snapshot } from '../types';
 import { Sparkline } from '../components/Sparkline';
 import SignalFeed from '../components/SignalFeed';
 import NewsFeed from '../components/NewsFeed';
+import NewsSentimentSummary from '../components/NewsSentimentSummary';
 import TripleScreener from '../components/TripleScreener';
 import FiiDiiPanel from '../components/FiiDiiPanel';
 
@@ -224,6 +225,7 @@ export default function Dashboard() {
             <h3>Live News</h3>
             <span className="hint">Google News · India</span>
           </div>
+          <NewsSentimentSummary />
           <div style={{ maxHeight: 360, overflowY: 'auto' }}>
             <NewsFeed items={news} limit={12} />
           </div>

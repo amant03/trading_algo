@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { SentimentBadge } from './Badge';
+import { classifySentiment } from '../lib/sentiment';
 
 interface SectorItem {
   title: string;
@@ -100,6 +102,7 @@ export default function SectorNews({ symbol }: { symbol: string }) {
               <a href={a.url} target="_blank" rel="noopener noreferrer">{a.title}</a>
               <div className="news-meta">
                 <span>{a.source}</span>
+                <SentimentBadge sentiment={classifySentiment(a.title)} />
                 <span>{new Date(a.publishedAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })}</span>
                 {a.kind === 'sector' ? (
                   <span style={{ color: 'var(--cyan)' }}>{a.viaSector} wire</span>

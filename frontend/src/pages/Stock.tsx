@@ -4,7 +4,8 @@ import { fetchWithTimeout, get } from '../api';
 import { useLive, refreshSymbols, fetchRelayNews, ensureFundamentals } from '../ws';
 import { fmt, fmtPct, fmtCompact, fmtMoney, cls } from '../format';
 import { useToast } from '../components/Toasts';
-import { DirectionBadge, GradeBadge } from '../components/Badge';
+import { DirectionBadge, GradeBadge, SentimentBadge } from '../components/Badge';
+import { classifySentiment } from '../lib/sentiment';
 import AdvChart, { type AdvRangeId } from '../components/charts/AdvChart';
 import NewsFeed from '../components/NewsFeed';
 import CompetitionPanel from '../components/CompetitionPanel';
@@ -886,6 +887,7 @@ export default function Stock() {
                     <a href={a.url} target="_blank" rel="noopener noreferrer">{a.title}</a>
                     <div className="news-meta">
                       <span>{a.source}</span>
+                      <SentimentBadge sentiment={classifySentiment(a.title)} />
                       <span>{new Date(a.publishedAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })}</span>
                     </div>
                   </div>
