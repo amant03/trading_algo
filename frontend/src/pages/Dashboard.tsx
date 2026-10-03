@@ -7,7 +7,7 @@ import { Sparkline } from '../components/Sparkline';
 import SignalFeed from '../components/SignalFeed';
 import NewsFeed from '../components/NewsFeed';
 import NewsSentimentSummary from '../components/NewsSentimentSummary';
-import TripleScreener from '../components/TripleScreener';
+import LensBoard from '../components/LensBoard';
 import FiiDiiPanel from '../components/FiiDiiPanel';
 
 function SparkHistory({ symbol }: { symbol: string }) {
@@ -232,7 +232,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <TripleScreener />
+      <LensBoard />
 
       <FiiDiiPanel />
 

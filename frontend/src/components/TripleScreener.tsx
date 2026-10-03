@@ -42,7 +42,7 @@ function LivePrice({ symbol, fallback }: { symbol: string; fallback: number }) {
   return <>{fmt(price && price > 0 ? price : fallback)}</>;
 }
 
-export default function TripleScreener() {
+export default function TripleScreener({ onInspect, active }: { onInspect?: (symbol: string) => void; active?: string | null }) {
   const navigate = useNavigate();
   const fundamentals = useLive((s) => s.fundamentals);
   const universeList = useLive((s) => s.universe);
@@ -110,10 +110,10 @@ export default function TripleScreener() {
     <div className="panel reveal reveal-1 ts-panel" style={{ marginBottom: 16 }}>
       <div className="panel-title">
         <div>
-          <h3>Master screener — Buffett + Lynch + Graham</h3>
+          <h3>Fundamental — Buffett + Lynch + Graham</h3>
           <div className="hint" style={{ marginTop: 4, textTransform: 'none', letterSpacing: 0 }}>
             Ranked by the <b>blended verdict</b> — the same 0–100 number each stock page shows.
-            Buffett = quality (ROE, margins, low debt). Lynch = growth at a fair price. Graham = margin of safety.
+            Buffett 45% (quality) · Lynch 35% (growth at a fair price) · Graham 20% (margin of safety).
           </div>
         </div>
         <span className="hint">{rows.length} of {universe.length} pass · {presetMeta.hint}</span>
@@ -174,10 +174,15 @@ export default function TripleScreener() {
                       ? 'var(--amber)'
                       : 'var(--down)';
                 return (
-                  <tr key={p.symbol} onClick={() => navigate(`/stock/${p.symbol}`)}>
+                  <tr key={p.symbol} className={active === p.symbol ? 'lens-active' : ''} onClick={() => (onInspect ? onInspect(p.symbol) : navigate(`/stock/${p.symbol}`))}>
                     <td>
                       <div className="sym-cell">{p.symbol}</div>
                       <div className="name-cell">{p.name ?? p.sector ?? ''} · <span style={{ textTransform: 'capitalize' }}>{capLabel(p.symbol)}-cap</span></div>
+                      {onInspect && (
+                        <button type="button" className="lens-open" onClick={(e) => { e.stopPropagation(); navigate(`/stock/${p.symbol}`); }}>
+                          Open
+                        </button>
+                      )}
                     </td>
                     <td><ScreenMark label="quality" score={p.screens.buffett.score} grade={p.screens.buffett.grade} /></td>
                     <td><ScreenMark label="growth" score={p.screens.lynch.score} grade={p.screens.lynch.grade} /></td>

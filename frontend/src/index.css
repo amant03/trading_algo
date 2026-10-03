@@ -1349,6 +1349,85 @@ a.news-headline:hover { color: var(--cyan); }
 .ts-bar > span.down { background: var(--down); }
 .ts-mark-n.amber { color: var(--amber); }
 
+/* ---------- three lenses ---------- */
+.lens-board { margin-bottom: 8px; }
+.lens-bars { display: flex; flex-direction: column; gap: 6px; }
+.lens-pick {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) 36px;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  padding: 3px 0;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+.lens-pick.on .lens-sym { color: var(--cyan); }
+.lens-sym { font-family: var(--font-mono); font-size: 11px; font-weight: 700; }
+.lens-track { height: 7px; background: rgba(255,255,255,0.06); border-radius: 99px; overflow: hidden; }
+.lens-track > span { display: block; height: 100%; border-radius: 99px; }
+.lens-track > span.up { background: linear-gradient(90deg, #00b877, var(--up)); }
+.lens-track > span.down { background: linear-gradient(90deg, #e04343, var(--down)); }
+.lens-track > span.amber { background: var(--amber); }
+.lens-n { font-family: var(--font-mono); font-size: 12px; font-weight: 700; text-align: right; }
+.lens-n.up { color: var(--up); }
+.lens-n.down { color: var(--down); }
+.lens-n.amber { color: var(--amber); }
+.lens-formula {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) auto minmax(0, 1.4fr) auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg2);
+}
+.lens-k { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); }
+.lens-v { font-family: var(--font-mono); font-size: 28px; font-weight: 700; line-height: 1.1; }
+.lens-v span { font-size: 13px; color: var(--dim); font-weight: 600; margin-left: 2px; }
+.lens-v.up { color: var(--up); }
+.lens-v.down { color: var(--down); }
+.lens-v.amber { color: var(--amber); }
+.lens-op { font-family: var(--font-mono); color: var(--dim); font-size: 13px; }
+.lens-sub {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.sig { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 700; }
+.sig.buy { color: var(--up); }
+.sig.sell { color: var(--down); }
+.sig.neutral { color: var(--amber); }
+.lens-open {
+  margin-top: 4px;
+  background: transparent;
+  color: var(--cyan);
+  border: 1px solid var(--line2);
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+.lens-open.on { background: var(--cyan-soft); }
+tr.lens-active td { background: rgba(63, 208, 234, 0.07); }
+@media (max-width: 900px) {
+  .lens-formula { grid-template-columns: 1fr; }
+  .lens-op { display: none; }
+}
+
 /* ---------- supply-chain dependencies ---------- */
 .dep-page .dep-intro {
   font-size: 13px;
