@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { fetchWithTimeout } from '../api';
 import type { DepEntry, DepFile, DepRow } from '../types';
 
 const DEPENDENCY_URLS = [
@@ -20,7 +21,7 @@ async function loadDepFile(): Promise<DepFile | null> {
   depPromise = (async () => {
     for (const url of DEPENDENCY_URLS) {
       try {
-        const res = await fetch(url, { cache: 'no-store' });
+        const res = await fetchWithTimeout(url, { cache: 'no-store' }, 15000);
         if (!res.ok) continue;
         const json = (await res.json()) as DepFile;
         if (json?.data) {
@@ -86,8 +87,20 @@ function pctLabel(w: WeightedRow, side: 'supplier' | 'customer'): string {
     : `${n}% of disclosed purchases from named counterparties`;
 }
 
-function originLabel(r: DepRow): string {
-  if (r.basis === 'inferred-reverse' && r.via?.symbol) return `Inferred from ${r.via.symbol} filings`;
+/** True when an evidence string is bare table exhaust rather than a readable
+ *  sentence — digit-dense, token-less, or absurdly long unbroken runs. */
+function isQuoteSoup(ev: string): boolean {
+  const t = ev.trim();
+  if (t.length < 40) return true;
+  const digits = (t.match(/[\d().,%]/g) ?? []).length;
+  if (digits / Math.max(1, t.length) > 0.45) return true;
+  if (/\S{40,}/.test(t)) return true;
+  const words = t.split(/\s+/).filter((w) => /[a-zA-Z]{3,}/.test(w));
+  if (words.length < 4) return true;
+  return false;
+}
+
+function originLabel(r: DepRow): string {  if (r.basis === 'inferred-reverse' && r.via?.symbol) return `Inferred from ${r.via.symbol} filings`;
   if (r.basis === 'disclosed-rpt') return 'Related-party note in the annual report';
   if (r.basis === 'disclosed-report') return r.source;
   return r.source;
@@ -130,6 +143,10 @@ function DepCard({ self, w }: { self: string; w: WeightedRow }) {
   const r = w.row;
   const clickable = Boolean(r.symbol);
   const bar = Math.max(0, Math.min(100, w.pct ?? 0));
+  // Scraped table slices sometimes come out as bare number-soup ("49.66(1.76)
+  // 285.00(285.00)…") — a source link is shown instead of a junk quote.
+  const ev = (r.evidence ?? '').trim();
+  const showQuote = ev.length >= 40 && !isQuoteSoup(ev);
   return (
     <article
       className={`dep-card ${r.side}${clickable ? ' go' : ''}`}
@@ -150,8 +167,8 @@ function DepCard({ self, w }: { self: string; w: WeightedRow }) {
         <span style={{ width: `${bar}%` }} />
       </div>
       <p className="dep-copy">{explainRow(self, w)}</p>
-      {r.evidence && (
-        <blockquote className="dep-quote">“{r.evidence.trim()}”</blockquote>
+      {showQuote && (
+        <blockquote className="dep-quote">“{ev}”</blockquote>
       )}
       <div className="dep-origin">{originLabel(r)}{clickable ? ' · click to open this stock' : ''}</div>
     </article>

@@ -544,8 +544,36 @@ function headerSide(line: string | undefined): 'supplier' | 'customer' | 'veto' 
   return null;
 }
 
-function mineRPT(text: string, source: string, selfSym: string, selfName: string): DepRow[] {
-  const rows: DepRow[] = [];
+/** Digit-dense table exhaust rather than a readable sentence. */
+function isSoupEvidence(ev: string): boolean {
+  const t = ev.trim();
+  if (t.length < 40) return true;
+  const digits = (t.match(/[\d().,%]/g) ?? []).length;
+  if (digits / Math.max(1, t.length) > 0.45) return true;
+  if (/\S{40,}/.test(t)) return true;
+  const words = t.split(/\s+/).filter((w) => /[a-zA-Z]{3,}/.test(w));
+  if (words.length < 4) return true;
+  return false;
+}
+
+/** Nearest sentence-sized line mentioning the name plus a relationship verb. */
+function nearbySentence(lines: string[], i: number, name: string): string | null {
+  const first = name.split(/\s+/)[0].toLowerCase();
+  if (first.length < 3) return null;
+  for (let d = 0; d <= 3; d++) {
+    for (const j of [i - d, i + d]) {
+      const line = lines[j];
+      if (!line || line.length > 400 || line.length < 40) continue;
+      if (!line.toLowerCase().includes(first)) continue;
+      if (!/sale|purchase|service|income|deposit|dividend|rent|royalt|commission|contract|supply|suppliem|provided/i.test(line)) continue;
+      if (isSoupEvidence(line)) continue;
+      return line.slice(0, 240);
+    }
+  }
+  return null;
+}
+
+function mineRPT(text: string, source: string, selfSym: string, selfName: string): DepRow[] {  const rows: DepRow[] = [];
   const selfN = selfName.toLowerCase().replace(/[^a-z]/g, '').replace(/(ltd|limited|private|pvt)$/, '');
   const lines = text.split(/\n+/).map((l) => l.replace(/\s+/g, ' ').trim()).filter((l) => l.length > 0);
   const seen = new Set<string>();
@@ -591,10 +619,16 @@ function mineRPT(text: string, source: string, selfSym: string, selfName: string
       const k = `${side}|${(listed?.symbol ?? display).toLowerCase()}`;
       if (seen.has(k)) continue;
       seen.add(k);
-      const evidence = window
+      let evidence = window
         .replace(/(?:[UL]\d{5}[A-Z]{2}\d{4}[A-Z]{3}\d{6})/g, '')
         .replace(/\s+/g, ' ').trim()
         .slice(Math.max(0, em.index - 100), em.index + 140);
+      // Table exhaust ("49.66(1.76)285.00(285.00)…") is not a quote: prefer
+      // a nearby real sentence naming the counterparty, else cite plainly.
+      if (isSoupEvidence(evidence)) {
+        const sent = nearbySentence(lines, i, name) ?? nearbySentence(lines, i, display);
+        evidence = sent ?? `“${display}” named in ${source} related-party transactions.`;
+      }
       rows.push({
         name: display,
         symbol: listed ? listed.symbol : null,
