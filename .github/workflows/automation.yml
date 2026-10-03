@@ -91,6 +91,18 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
+      # Technical + techno-fundamental lenses. Scrapes in.tradingview.com
+      # (India scanner) and falls back to the global scanner. Runs on every
+      # automation, market-hours and nightly, and publishes
+      # frontend/public/tech-screen.json. A failed scrape keeps the previous file.
+      - name: Pre-stage previous technical screen
+        run: |
+          curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/tech-screen.json \
+            -o frontend/public/tech-screen.json || echo "no previous technical screen — first run"
+
+      - name: Technical screen (TradingView India)
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/tech-screen.ts
+
       # ---- market-hours news only (no DB / services / fundamentals) -------
       - name: Refresh per-stock news (market hours)
         if: env.MODE == 'news'
@@ -400,6 +412,7 @@ jobs:
           git add frontend/public/signals.json 2>/dev/null || true
           git add frontend/public/dependencies.json 2>/dev/null || true
           git add frontend/public/tv-rank.json 2>/dev/null || true
+          git add frontend/public/tech-screen.json 2>/dev/null || true
           git add frontend/public/fii-dii.json 2>/dev/null || true
           git add frontend/public/sector-news.json 2>/dev/null || true
           git add frontend/public/sectors.json 2>/dev/null || true

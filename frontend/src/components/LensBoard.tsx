@@ -6,11 +6,9 @@ import TripleScreener from './TripleScreener';
 import {
   COMBINED_HALF,
   FUNDA_WEIGHTS,
-  TECH_COLUMNS,
   combineScores,
   fundaBuy,
   fundamentalPoints,
-  parseScanRows,
   techBuy,
   type FundaPoint,
   type TechPoint,
@@ -118,35 +116,41 @@ function PointTable({ title, weight, rows }: { title: string; weight: string; ro
   );
 }
 
-async function loadTech(limit: number): Promise<TechFile> {
+// Published by scripts/ci/tech-screen.ts on every automation run.
+// Same order as the other snapshot files: automation-data first (no redeploy),
+// then main, then the file shipped with this build.
+const TECH_URLS = [
+  'https://cdn.jsdelivr.net/gh/amant03/trading_algo@automation-data/frontend/public/tech-screen.json',
+  'https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/tech-screen.json',
+  'https://cdn.jsdelivr.net/gh/amant03/trading_algo@main/frontend/public/tech-screen.json',
+  'https://raw.githubusercontent.com/amant03/trading_algo/main/frontend/public/tech-screen.json',
+  '/tech-screen.json',
+];
+
+async function loadTech(): Promise<TechFile> {
+  for (const url of TECH_URLS) {
+    try {
+      const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
+      if (!res.ok) continue;
+      const ct = res.headers.get('content-type') ?? '';
+      if (ct.includes('text/html')) continue;
+      const data = (await res.json()) as TechFile;
+      if (data.rows?.length) return data;
+    } catch {
+      continue;
+    }
+  }
   try {
-    const res = await fetch(`/api/techscreen?limit=${limit}`, { cache: 'no-store' });
+    const res = await fetch('/api/techscreen?limit=200', { cache: 'no-store' });
     const ct = res.headers.get('content-type') ?? '';
     if (res.ok && !ct.includes('text/html')) {
       const data = (await res.json()) as TechFile;
       if (data.rows?.length) return data;
-      if (data.error) throw new Error(data.error);
     }
-    throw new Error('relay empty');
   } catch {
-    const res = await fetch('https://scanner.tradingview.com/india/scan', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        filter: [{ left: 'exchange', operation: 'equal', right: 'NSE' }],
-        options: { lang: 'en' },
-        symbols: { query: { types: [] }, tickers: [] },
-        sort: { sortBy: 'market_cap_basic', sortOrder: 'desc' },
-        range: [0, limit],
-        columns: [...TECH_COLUMNS],
-        markets: ['india'],
-      }),
-    });
-    if (!res.ok) throw new Error(`tradingview scan failed: ${res.status}`);
-    const body = (await res.json()) as { data?: { s: string; d: unknown[] }[] };
-    const rows = parseScanRows(body.data ?? []);
-    return { asOf: new Date().toISOString(), source: 'tradingview', rows };
+    /* published file is the source of truth */
   }
+  throw new Error('Technical screen has not been published yet. The automation scrape fills it.');
 }
 
 export default function LensBoard() {
@@ -167,12 +171,12 @@ export default function LensBoard() {
   useEffect(() => {
     let cancel = false;
     setLoading(true);
-    loadTech(200)
+    loadTech()
       .then((data) => {
         if (cancel) return;
         setTechRows(data.rows ?? []);
         setAsOf(data.asOf ?? null);
-        setSource(data.source === 'cache' ? 'cache · TradingView India' : 'live · TradingView India');
+        setSource(data.source ? `automation · ${data.source}` : 'automation · TradingView India');
         setErr(null);
       })
       .catch((e: unknown) => {

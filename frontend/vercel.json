@@ -44,6 +44,10 @@
       "headers": [{ "key": "Cache-Control", "value": "no-cache, must-revalidate" }]
     },
     {
+      "source": "/tech-screen.json",
+      "headers": [{ "key": "Cache-Control", "value": "no-cache, must-revalidate" }]
+    },
+    {
       "source": "/news.json",
       "headers": [{ "key": "Cache-Control", "value": "no-cache, must-revalidate" }]
     },
