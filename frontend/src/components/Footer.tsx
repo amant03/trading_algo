@@ -5,7 +5,7 @@ export const DISCLAIMER =
 
 // Build tag rendered in the footer: lets anyone verify which commit is live
 // (and makes stuck-deployment diagnosis trivial — compare with GitHub main).
-const BUILD_TAG = 'perf-timeouts-20260930';
+const BUILD_TAG = 'paper-intraday-10L-20261003';
 
 export default function Footer() {
   return (

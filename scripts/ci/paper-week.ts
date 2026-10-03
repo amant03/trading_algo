@@ -8,7 +8,7 @@
 //     frontend/public/paper/live.json — today's live paper account.
 //
 // Every trading day starts with FRESH virtual money:
-//   * India (NSE): ₹10,000  (₹2,000 per strategy bucket)
+//   * India (NSE): ₹10,00,000
 //   * USA (NYSE/NASDAQ): $1,000  ($200 per strategy bucket)
 //
 // LONG-ONLY intraday, same five methods as paper-daily.ts
@@ -17,10 +17,12 @@
 //   * India bars: `.NS` tickers, 09:15–15:30 Asia/Kolkata
 //   * US bars: plain tickers, 09:30–16:00 America/New_York
 //
-// Risk management (per position) — exactly as requested:
+// Risk management (per position):
 //   * HARD STOP: 1% below the fill price
-//   * TAKE PROFIT: none — winners run until a bearish signal or EOD square-off
-//   * EOD SQUARE-OFF: everything closed at the session's last bar
+//   * TAKE PROFIT: none — winners run until the close
+//   * EOD SQUARE-OFF: every position opened today is sold today. A 5-minute
+//     opposite signal is not an exit; that churn was the recorded loss.
+//   * No new entry in the last hour of the session (it cannot develop).
 //
 // Every trade carries the ACTUAL technical reason (indicator values at the
 // decision bar) plus a compact `tech` snapshot string, so the UI can show
@@ -71,7 +73,7 @@ const MARKETS: MarketCfg[] = [
     tz: 'Asia/Kolkata',
     suffix: '.NS',
     symbols: IN_SYMBOLS,
-    capital: Number(process.env.PAPER_WEEK_IN_CAPITAL ?? 10_000),
+    capital: Number(process.env.PAPER_WEEK_IN_CAPITAL ?? 1_000_000),
     currency: '₹',
     locale: 'en-IN',
     session: [9 * 60 + 15, 15 * 60 + 30],
@@ -91,8 +93,13 @@ const MARKETS: MarketCfg[] = [
   },
 ].filter((m) => (process.env.PAPER_WEEK_MARKETS ?? 'in,us').split(',').map((s) => s.trim()).includes(m.key));
 
-const SL_PCT = 0.01; // 1% hard stop — the ONLY exit besides signal/EOD
+const SL_PCT = 0.01; // 1% hard stop — the ONLY exit besides the closing square-off
 const SLIPPAGE = 0.0005;
+const MA_SEP_PCT = 0.0008; // ignore paise-wide golden crosses
+const BB_BUFFER = 0.0005;
+const RSI_BUY_MAX = 45;
+const MAX_NAMESAKE = 1; // a second method in the same name doubles the stop
+const ENTRY_CUTOFF_BEFORE_CLOSE = 60; // minutes — no new longs in the last hour
 const POOL_SIZE = 8;
 const WARMUP_BARS = 90;
 const MIN_BARS_FOR_SIGNALS = 30;
@@ -272,7 +279,7 @@ function signalFor(strategy: string, bars: Bar[]): { dir: 'BUY' | 'SELL'; why: s
       const cF = f[f.length - 1];
       const cS = s[s.length - 1];
       if (Number.isNaN(pF) || Number.isNaN(pS) || Number.isNaN(cF) || Number.isNaN(cS)) return null;
-      if (pF <= pS && cF > cS)
+      if (pF <= pS && cF > cS && last > 0 && (cF - cS) / last >= MA_SEP_PCT)
         return { dir: 'BUY', why: `Golden cross: SMA${fast} ${cF.toFixed(2)} crossed above SMA${slow} ${cS.toFixed(2)} (was ${pF.toFixed(2)} vs ${pS.toFixed(2)})` };
       if (pF >= pS && cF < cS)
         return { dir: 'SELL', why: `Death cross: SMA${fast} ${cF.toFixed(2)} crossed below SMA${slow} ${cS.toFixed(2)} (was ${pF.toFixed(2)} vs ${pS.toFixed(2)})` };
@@ -284,7 +291,7 @@ function signalFor(strategy: string, bars: Bar[]): { dir: 'BUY' | 'SELL'; why: s
       const p = r[r.length - 2];
       const x = r[r.length - 1];
       if (Number.isNaN(p) || Number.isNaN(x)) return null;
-      if (p <= oversold && x > oversold)
+      if (p <= oversold && x > oversold && x <= RSI_BUY_MAX)
         return { dir: 'BUY', why: `RSI(${period}) rebounded to ${x.toFixed(1)} out of oversold (prev ${p.toFixed(1)} ≤ ${oversold})` };
       if (p >= overbought && x < overbought)
         return { dir: 'SELL', why: `RSI(${period}) fell to ${x.toFixed(1)} out of overbought (prev ${p.toFixed(1)} ≥ ${overbought})` };
@@ -306,7 +313,7 @@ function signalFor(strategy: string, bars: Bar[]): { dir: 'BUY' | 'SELL'; why: s
       const pB = bb[bb.length - 2];
       const cB = bb[bb.length - 1];
       if (Number.isNaN(pB.upper) || Number.isNaN(cB.upper)) return null;
-      if (prev <= pB.upper && last > cB.upper)
+      if (prev <= pB.upper && last > cB.upper * (1 + BB_BUFFER))
         return { dir: 'BUY', why: `Close ${last.toFixed(2)} broke above upper Bollinger band ${cB.upper.toFixed(2)} (${mult}σ, basis ${cB.middle.toFixed(2)})` };
       if (prev >= pB.lower && last < cB.lower)
         return { dir: 'SELL', why: `Close ${last.toFixed(2)} broke below lower Bollinger band ${cB.lower.toFixed(2)} (${mult}σ, basis ${cB.middle.toFixed(2)})` };
@@ -443,7 +450,6 @@ function replayDay(
         if (!bar) continue;
         const full = withWarm(pos.symbol, i);
         const entryStop = pos.entryPrice * (1 - SL_PCT);
-        const sig = signalFor(strat.id, full);
 
         let exitPrice: number | null = null;
         let exitClass: Trade['exitClass'] = 'eod';
@@ -452,10 +458,6 @@ function replayDay(
           exitPrice = entryStop;
           exitClass = 'stop-loss';
           reason = `STOP-LOSS 1%: bar low ${bar.l.toFixed(2)} pierced stop ${entryStop.toFixed(2)} (entry ${pos.entryPrice.toFixed(2)})`;
-        } else if (sig?.dir === 'SELL') {
-          exitPrice = bar.c;
-          exitClass = 'signal-exit';
-          reason = `Bearish exit — ${sig.why}`;
         } else if (!sessionLive && i === symBars!.length - 1) {
           exitPrice = bar.c;
           exitClass = 'eod';
@@ -469,10 +471,28 @@ function replayDay(
         let best: { symbol: string; price: number; why: string; tech: string; barTs: number } | null = null;
         for (const [sym, bars] of today) {
           if (i >= bars.length) continue;
+          if (!sessionLive && i === bars.length - 1) continue;
           const bar = bars[i];
+          if (minutesOf(bar.ts, m.tz) >= m.session[1] - ENTRY_CUTOFF_BEFORE_CLOSE) continue;
+          if ([...positions.values()].filter((p) => p.symbol === sym).length >= MAX_NAMESAKE) continue;
           const full = withWarm(sym, i);
           const sig = signalFor(strat.id, full);
-          if (sig?.dir === 'BUY' && (!best || bar.c > best.price)) {
+          if (sig?.dir !== 'BUY') continue;
+          // Same gates the daily brain learned from the loss book:
+          // no falling knives, no chase above RSI 68, no thin-volume poke.
+          const closes = full.map((b) => b.c);
+          const s20 = sma(closes, 20);
+          const ref = s20[s20.length - 1];
+          const trendOk = Number.isNaN(ref) ? bar.c > bars[0].o : bar.c > ref;
+          if (!trendOk) continue;
+          if (bars[0].o > 0 && ((bar.c / bars[0].o) - 1) * 100 < 0) continue;
+          const r14 = rsi(closes, 14);
+          const curR = r14[r14.length - 1];
+          if (!Number.isNaN(curR) && curR > 68) continue;
+          const vols = bars.slice(Math.max(0, i - 9), i + 1).map((b) => b.v);
+          const avgV = vols.reduce((a, v) => a + v, 0) / Math.max(1, vols.length);
+          if (avgV > 0 && bar.v < avgV) continue;
+          if (!best || bar.c > best.price) {
             best = { symbol: sym, price: bar.c, why: sig.why, tech: techSnapshot(full), barTs: bar.ts };
           }
         }
@@ -578,12 +598,12 @@ async function main(): Promise<void> {
   const store: WeekStore = {
     ts: new Date().toISOString(),
     config: {
-      inCapital: MARKETS.find((m) => m.key === 'in')?.capital ?? 10_000,
+      inCapital: MARKETS.find((m) => m.key === 'in')?.capital ?? 1_000_000,
       usCapital: MARKETS.find((m) => m.key === 'us')?.capital ?? 1_000,
       stopLossPct: SL_PCT,
       takeProfit: null,
       strategies: STRATEGIES.map((s) => s.id),
-      note: 'Fresh account every day. 1% hard stop-loss, no take-profit (unlimited upside). EOD square-off.',
+      note: 'Fresh ₹10,00,000 every day. Buy and sell the same session. 1% hard stop-loss. Squared off at the close — no overnight hold, no 5-minute signal scratch.',
     },
     in: [],
     us: [],

@@ -105,11 +105,13 @@ function LegPanel({
           <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.08em', color: '#ffb020', background: 'rgba(255,176,32,0.12)', borderRadius: 4, padding: '2px 7px', marginRight: 8 }}>
             NSE
           </span>
-          India · NSE — fresh ₹10,000
+          India · NSE — fresh {money(leg.startCapital)}
         </h3>
-        <span className="hint" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span className="hint" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span className="dot" style={{ background: live ? 'var(--up)' : 'var(--down)', width: 7, height: 7, borderRadius: '50%', display: 'inline-block' }} />
-          {leg.status === 'open' ? 'SESSION LIVE' : leg.status === 'closed' ? `CLOSED · ${prettyDate(leg.date)}` : 'NO SESSION'} · {refreshedAt}
+          {prettyDate(leg.date)}
+          {leg.status === 'open' ? ' · SESSION LIVE' : leg.status === 'closed' ? ' · CLOSED' : ' · NO SESSION'}
+          {' · '}{refreshedAt}
         </span>
       </div>
 
@@ -243,13 +245,14 @@ export default function LivePaper() {
     <div>
       <div className="panel reveal" style={{ marginBottom: 12, padding: '12px 16px' }}>
         <div className="panel-title" style={{ marginBottom: 8 }}>
-          <h3>Live paper trading — today&apos;s NSE session</h3>
-          <span className="hint">fresh ₹10,000 · long-only · 1% stop · no take-profit · news-aware</span>
+          <h3>Live paper trading — {store.in?.date ? new Date(`${store.in.date}T12:00:00`).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : 'today’s NSE session'}</h3>
+          <span className="hint">fresh ₹10,00,000 · long-only · buy and sell the same day · 1% stop · squared off at the close</span>
         </div>
         <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.55 }}>
-          The automation replays today&apos;s 5-minute NSE bars every run during market hours, fused with fresh
-          news headlines. Positions stay open and are marked to the latest bar; everything squares off at the
-          closing bell and the account resets fresh tomorrow. For multi-day history, see the Week Backtest tab.
+          The automation replays today&apos;s 5-minute NSE bars during market hours. Every buy is sold the
+          same day: a 1% stop can close it early, and whatever is still open is squared off at the closing
+          bell. The book starts fresh at ₹10,00,000 the next session. For the last five sessions, see the
+          Week Backtest tab.
         </div>
       </div>
       <div style={{ display: 'grid', gap: 12 }}>

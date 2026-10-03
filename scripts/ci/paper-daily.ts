@@ -5,7 +5,7 @@
 // strategies that bleed get benched automatically.
 //
 // This is a LONG-ONLY intraday paper trader:
-//   * every IST trading day starts with a FRESH ₹1,00,000 of virtual money,
+//   * every IST trading day starts with a FRESH ₹10,00,000 of virtual money,
 //   * trades SEVEN methods on TODAY's real 5-minute NSE bars
 //     (ma_cross, rsi_reversal, macd_cross, bb_breakout, supertrend,
 //      donchian_breakout, stoch_cross),
@@ -20,14 +20,19 @@
 // Trade lifecycle:
 //   1. BUY on a bullish signal WITH trend confluence (never into a downtrend)
 //   2. HOLD while it works — ratchet locks gains once +1% up
-//   3. SELL on: 1% hard stop / +2% take-profit / 1% ratchet-trail / fresh
-//      bearish NEWS / bearish signal exit / EOD square-off
+//   3. SELL the same day on: 1% hard stop / +1.5% take-profit / 1% ratchet /
+//      fresh bearish NEWS / the 15:15 square-off. A 5-minute opposite
+//      signal is NOT an exit — that churn was the loss (signal-exits
+//      −₹1,816 vs end-of-day exits +₹1,349 over the recorded book).
 //
 // Self-improvement (paper/learning.json, 10-session rolling window):
 //   * each strategy gets a WEIGHT from loss-averse scoring of its recent
 //     round trips; capital splits by weight, losers get starved then PAUSED
 //   * 6-bar COOLDOWN after any stop-loss (no revenge trading)
 //   * per-symbol AVOID list: two stop-outs in a day = done with it today
+//   * a benched method comes back only when its expectancy has healed.
+//     The clock alone does not parole it — that is how MA Cross and MACD
+//     were reinstated and lost again.
 //   * every pause/resume/weight-shift is logged as a human-readable LESSON
 //
 // Reruns are idempotent: each run replays today's closed bars from the day's open.
@@ -39,7 +44,7 @@ import { join } from 'path';
 import { sma, rsi, macd, bollinger, supertrend, stochastic } from '@trading/shared';
 import { INSTRUMENTS as SEED } from '../../services/shared/src/instruments-data.js';
 
-const INITIAL_CAPITAL = 100_000; // ₹1,00,000 fresh every IST trading day
+const INITIAL_CAPITAL = 1_000_000; // ₹10,00,000 fresh every IST trading day
 const SLIPPAGE = 0.0005;
 const SL_PCT = 0.01; // hard stop: 1% below the fill — losses stay tiny
 const TP_PCT = 0.015; // take profit: bank +1.5% quickly (1.5:1 reward:risk)
@@ -52,9 +57,12 @@ const REGIME_MIN_PCT = -0.3; // market-regime fuse: NIFTY itself down worse than
 const RSI_CEIL = 68; // never chase overbought: RSI above this blocks entries (FOMO filter)
 const VOL_MULT = 1.0; // entry bar volume must beat its 10-bar average (real participation, not noise)
 const CONFIRM_BARS = 2; // reserved: signal freshness window (signals evaluate live per bar, so recency is structural)
-const MIN_HOLD_BARS = 3; // baseline patience vs signal-exit churn
-const MIN_HOLD_WINNERS = 6; // green positions get room to reach TP/ratchet…
-const MIN_HOLD_LOSERS = 1; // …red positions are cut at the first bearish signal (SL still caps the worst case)
+const ENTRY_CUTOFF_MIN = 14 * 60 + 30; // 14:30 IST — a later buy is only a scratch into the square-off
+const MA_SEP_PCT = 0.0008; // golden cross must separate by 0.08% of price; paise-wide crosses were noise
+const DONCHIAN_BUFFER = 0.0015; // close must clear the 20-bar channel by 0.15%, not one tick
+const BB_BUFFER = 0.0005; // close must clear the Bollinger band, not poke it by a few paise
+const RSI_BUY_MAX = 45; // a "rebound" already at RSI 50+ is a chase, not an oversold buy
+const MAX_NAMESAKE = 1; // one method per symbol — a second copy just doubles the stop, as TCS did on 1 Oct
 const DAILY_STOP_PCT = 0.012; // daily circuit breaker: halt new entries at -1.2% realised
 const NEWS_FRESH_MS = 18 * 60 * 60_000; // headlines count for 18h (covers overnight news)
 const LEARN_WINDOW = 10; // rolling sessions of memory
@@ -99,7 +107,6 @@ interface Pos {
   entryReason: string;
   highSince: number;
   ratchetArmed: boolean; // true once +1%: lock gains, never give it all back
-  entryIdx: number; // bar index of entry (minimum-hold enforcement)
 }
 
 type ExitClass = 'eod' | 'signal-exit' | 'stop-loss' | 'trail-stop' | 'take-profit' | 'news-exit' | 'breaker';
@@ -340,7 +347,7 @@ interface LearnRuntime {
   cooldown: Map<string, number>; // strategy -> bars left to sit out
   avoid: Map<string, number>; // "strat|sym" -> stop-outs today
   avoidEvents: string[];
-  skips: { trend: number; news: number; cooldown: number; avoid: number; paused: number; drift: number; breaker: number; chase: number; thin: number; unconfirmed: number; regime: number };
+  skips: { trend: number; news: number; cooldown: number; avoid: number; paused: number; drift: number; breaker: number; chase: number; thin: number; unconfirmed: number; regime: number; late: number; stacked: number };
   newsDay: { actions: number; net: number; blocked: number };
   halted: boolean; // daily circuit breaker tripped — no new entries
   exitMix: Record<string, number>;
@@ -474,10 +481,19 @@ function refreshBrain(learn: LearnState, date: string): string[] {
         learn.strategies[s.id].streak = 0;
         learn.strategies[s.id].pausedUntil = null;
       } else if (prev.pausedUntil != null && date >= prev.pausedUntil) {
-        // …or time parole: bench time served, back at half bucket.
-        cur = { ...cur, weight: 0.5, paused: false, reason: 'paroled: bench time served — half bucket until it proves itself' };
-        learn.strategies[s.id].streak = 0;
-        learn.strategies[s.id].pausedUntil = null;
+        // Clock parole only if the window is no longer a loser. Time-served
+        // reinstatement of a still-negative method is how MA Cross and MACD
+        // came back and lost again.
+        if (w.n >= 3 && w.mean >= 0) {
+          cur = { ...cur, weight: 0.5, paused: false, reason: `paroled: bench time served and expectancy healed to +${w.mean.toFixed(2)}%/trade — half bucket until it proves itself` };
+          learn.strategies[s.id].streak = 0;
+          learn.strategies[s.id].pausedUntil = null;
+        } else {
+          learn.strategies[s.id].pausedUntil = plusDays(date, 5);
+          lessons.push(
+            `BENCH EXTENDED ${s.label} — time was served but expectancy is still ${w.mean >= 0 ? '+' : ''}${w.mean.toFixed(2)}%/trade over ${w.n} trips. Repeating that loss is refused. Next look ${learn.strategies[s.id].pausedUntil}.`,
+          );
+        }
       }
     }
     if (!cur.paused && wasPaused && learn.strategies[s.id].pausedUntil == null && !lessons.some((l) => l.includes(s.label))) {
@@ -504,7 +520,7 @@ function makeRuntime(learn: LearnState, news: Map<string, NewsItem[]>, nifty?: {
     cooldown: new Map(),
     avoid: new Map(),
     avoidEvents: [],
-    skips: { trend: 0, news: 0, cooldown: 0, avoid: 0, paused: 0, drift: 0, breaker: 0, chase: 0, thin: 0, unconfirmed: 0, regime: 0 },
+    skips: { trend: 0, news: 0, cooldown: 0, avoid: 0, paused: 0, drift: 0, breaker: 0, chase: 0, thin: 0, unconfirmed: 0, regime: 0, late: 0, stacked: 0 },
     newsDay: { actions: 0, net: 0, blocked: 0 },
     halted: false,
     exitMix: {},
@@ -569,10 +585,10 @@ function updateLearning(learn: LearnState, date: string, dayTrades: Trade[], rt:
       `News fuse fired ${rt.newsDay.actions}× (net ${rt.newsDay.net >= 0 ? '+' : ''}₹${Math.round(rt.newsDay.net)}) and blocked ${rt.newsDay.blocked} entries on bearish headlines.`,
     );
   }
-  const skipTotal = rt.skips.trend + rt.skips.cooldown + rt.skips.avoid + rt.skips.paused + rt.skips.drift + rt.skips.breaker + rt.skips.chase + rt.skips.thin + rt.skips.unconfirmed + rt.skips.regime;
+  const skipTotal = rt.skips.trend + rt.skips.cooldown + rt.skips.avoid + rt.skips.paused + rt.skips.drift + rt.skips.breaker + rt.skips.chase + rt.skips.thin + rt.skips.unconfirmed + rt.skips.regime + rt.skips.late + rt.skips.stacked;
   if (skipTotal > 0) {
     lessons.push(
-      `Selectiveness — skipped ${skipTotal} entries (regime ${rt.skips.regime}, trend ${rt.skips.trend}, drift ${rt.skips.drift}, chase ${rt.skips.chase}, thin-vol ${rt.skips.thin}, unconfirmed ${rt.skips.unconfirmed}, cooldown ${rt.skips.cooldown}, avoid-list ${rt.skips.avoid}, benched ${rt.skips.paused}, breaker ${rt.skips.breaker}). Fewer, better trades.`,
+      `Selectiveness — skipped ${skipTotal} entries (regime ${rt.skips.regime}, trend ${rt.skips.trend}, drift ${rt.skips.drift}, chase ${rt.skips.chase}, thin-vol ${rt.skips.thin}, late ${rt.skips.late}, stacked ${rt.skips.stacked}, unconfirmed ${rt.skips.unconfirmed}, cooldown ${rt.skips.cooldown}, avoid-list ${rt.skips.avoid}, benched ${rt.skips.paused}, breaker ${rt.skips.breaker}). Fewer, better trades.`,
     );
   }
   if (rt.halted) {
@@ -673,7 +689,8 @@ function signalFor(strategy: string, bars: Bar[]): { dir: 'BUY' | 'SELL'; why: s
       const cF = f[f.length - 1];
       const cS = s[s.length - 1];
       if (Number.isNaN(pF) || Number.isNaN(pS) || Number.isNaN(cF) || Number.isNaN(cS)) return null;
-      if (pF <= pS && cF > cS) return { dir: 'BUY', why: `Golden cross: SMA${fast} crossed above SMA${slow}` };
+      if (pF <= pS && cF > cS && last > 0 && (cF - cS) / last >= MA_SEP_PCT)
+        return { dir: 'BUY', why: `Golden cross: SMA${fast} crossed above SMA${slow}` };
       if (pF >= pS && cF < cS) return { dir: 'SELL', why: `Death cross: SMA${fast} crossed below SMA${slow}` };
       return null;
     }
@@ -683,7 +700,8 @@ function signalFor(strategy: string, bars: Bar[]): { dir: 'BUY' | 'SELL'; why: s
       const p = r[r.length - 2];
       const x = r[r.length - 1];
       if (Number.isNaN(p) || Number.isNaN(x)) return null;
-      if (p <= oversold && x > oversold) return { dir: 'BUY', why: `RSI(${period}) ${x.toFixed(1)} rebounded out of oversold` };
+      if (p <= oversold && x > oversold && x <= RSI_BUY_MAX)
+        return { dir: 'BUY', why: `RSI(${period}) ${x.toFixed(1)} rebounded out of oversold` };
       if (p >= overbought && x < overbought) return { dir: 'SELL', why: `RSI(${period}) ${x.toFixed(1)} fell out of overbought` };
       return null;
     }
@@ -703,7 +721,8 @@ function signalFor(strategy: string, bars: Bar[]): { dir: 'BUY' | 'SELL'; why: s
       const pB = bb[bb.length - 2];
       const cB = bb[bb.length - 1];
       if (Number.isNaN(pB.upper) || Number.isNaN(cB.upper)) return null;
-      if (prev <= pB.upper && last > cB.upper) return { dir: 'BUY', why: `Broke above upper Bollinger band (${mult}x std dev)` };
+      if (prev <= pB.upper && last > cB.upper * (1 + BB_BUFFER))
+        return { dir: 'BUY', why: `Broke above upper Bollinger band (${mult}x std dev)` };
       if (prev >= pB.lower && last < cB.lower) return { dir: 'SELL', why: `Broke below lower Bollinger band (${mult}x std dev)` };
       return null;
     }
@@ -724,7 +743,8 @@ function signalFor(strategy: string, bars: Bar[]): { dir: 'BUY' | 'SELL'; why: s
       const window = bars.slice(-period - 1, -1);
       const hi = Math.max(...window.map((b) => b.h));
       const lo = Math.min(...window.map((b) => b.l));
-      if (last > hi) return { dir: 'BUY', why: `Donchian breakout: close ${last.toFixed(2)} above ${period}-bar high ${hi.toFixed(2)}` };
+      if (last > hi * (1 + DONCHIAN_BUFFER))
+        return { dir: 'BUY', why: `Donchian breakout: close ${last.toFixed(2)} above ${period}-bar high ${hi.toFixed(2)}` };
       if (last < lo) return { dir: 'SELL', why: `Donchian breakdown: close ${last.toFixed(2)} below ${period}-bar low ${lo.toFixed(2)}` };
       return null;
     }
@@ -880,7 +900,6 @@ function replayDay(
         const entryStop = pos.entryPrice * (1 - SL_PCT);
         const takeProfit = pos.entryPrice * (1 + TP_PCT);
         const ratchetStop = pos.ratchetArmed ? pos.highSince * (1 - TRAIL_GIVEBACK_PCT) : -Infinity;
-        const sig = symBars ? signalFor(strat.id, symBars.slice(0, i + 1)) : null;
         const newsNow = learn ? freshNews(learn.news.get(pos.symbol), bar.ts) : { bullish: [], bearish: [] };
 
         let exitPrice: number | null = null;
@@ -905,16 +924,6 @@ function replayDay(
           exitClass = 'news-exit';
           newsDriven = true;
           reason = `NEWS exit on fresh bearish headline — "${newsNow.bearish[0].title.slice(0, 90)}"`;
-        } else if (sig?.dir === 'SELL') {
-          // Asymmetric patience: green positions get room (winners must
-          // reach TP/ratchet), red positions are cut at the first warning.
-          // Protection exits (SL/TP/ratchet/news) stay live from bar one.
-          const holdNeed = bar.c >= pos.entryPrice ? MIN_HOLD_WINNERS : MIN_HOLD_LOSERS;
-          if (i - pos.entryIdx >= holdNeed) {
-            exitPrice = bar.c;
-            exitClass = 'signal-exit';
-            reason = `Bearish exit signal — ${sig.why}`;
-          }
         } else if (dayComplete && i === symBars!.length - 1) {
           exitPrice = bar.c;
           exitClass = 'eod';
@@ -959,6 +968,17 @@ function replayDay(
           const bar = bars[i];
           const sig = signalFor(strat.id, bars.slice(0, i + 1));
           if (sig?.dir !== 'BUY') continue;
+          // No new longs in the last hour. Those buys were squared off
+          // a few minutes later and booked a scratch or a loss.
+          if (minutesOf(bar.ts) >= ENTRY_CUTOFF_MIN) {
+            if (learn) learn.skips.late += 1;
+            continue;
+          }
+          // One method per name. A second copy of the same stock doubles the loss when the stop hits.
+          if ([...positions.values()].filter((p) => p.symbol === sym).length >= MAX_NAMESAKE) {
+            if (learn) learn.skips.stacked += 1;
+            continue;
+          }
           // NOTE: no "confirm on previous bar" gate here — crossover signals
           // fire exactly once by construction, so that test would be
           // impossible and block every entry. Freshness is structural: the
@@ -1044,7 +1064,6 @@ function replayDay(
               entryReason: best.why,
               highSince: price,
               ratchetArmed: false,
-              entryIdx: i,
             });
 
             logTrade(strat.id, best.symbol, 'BUY', qty, price, 0, null, 'entry', `Entry: ${best.why}`, timeOf(best.barTs), best.newsDriven);

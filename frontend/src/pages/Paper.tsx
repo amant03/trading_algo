@@ -160,6 +160,21 @@ const inr = (n: number | null | undefined, digits = 0): string =>
 const pnlCls = (n: number | null | undefined): string => (n == null ? '' : n > 0.005 ? 'up' : n < -0.005 ? 'down' : '');
 const clsPnL = pnlCls;
 
+function istToday(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
+function fullDate(iso: string): string {
+  const d = new Date(`${iso}T12:00:00`);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+}
+
 function Spark({ series }: { series: { equity: number }[] }) {
   if (series.length < 2) return <div className="empty" style={{ minHeight: 120 }}>Equity curve builds after the first daily runs.</div>;
   const w = 640;
@@ -405,30 +420,41 @@ function SwingTradesTable({ trades }: { trades: TradeRow[] }) {
 
   const arrow = (key: SortKey) => sortKey === key ? (sortAsc ? ' ▲' : ' ▼') : '';
 
+  const PAGE = 40;
+  const [limit, setLimit] = useState(PAGE);
+  const visible = sorted.slice(0, limit);
+
   return (
-    <div className="table paper-ledger">
-      <div className="tr head">
-        <span onClick={() => toggleSort('day')} style={{ cursor: 'pointer' }}>Day{arrow('day')}</span>
-        <span onClick={() => toggleSort('strategy')} style={{ cursor: 'pointer' }}>Method{arrow('strategy')}</span>
-        <span onClick={() => toggleSort('symbol')} style={{ cursor: 'pointer' }}>Symbol{arrow('symbol')}</span>
-        <span onClick={() => toggleSort('side')} style={{ cursor: 'pointer' }}>Side{arrow('side')}</span>
-        <span onClick={() => toggleSort('qty')} style={{ cursor: 'pointer' }}>Qty{arrow('qty')}</span>
-        <span onClick={() => toggleSort('price')} style={{ cursor: 'pointer' }}>Price{arrow('price')}</span>
-        <span onClick={() => toggleSort('pnl')} style={{ cursor: 'pointer' }}>P&L{arrow('pnl')}</span>
-        <span onClick={() => toggleSort('reason')} style={{ cursor: 'pointer' }}>Why{arrow('reason')}</span>
-      </div>
-      {sorted.map((t, i) => (
-        <div key={i} className="tr">
-          <span className="mono muted">{t.day}</span>
-          <span className="muted">{STRAT_META_LABELS.get(t.strategy) ?? t.strategy}</span>
-          <span className="mono">{t.symbol}</span>
-          <span className={t.side === 'BUY' ? 'up' : 'down'}>{t.side}</span>
-          <span className="mono">{t.qty}</span>
-          <span className="mono">{inr(t.price, 2)}</span>
-          <span className={clsPnL(t.pnl)}>{t.side === 'SELL' ? `${inr(t.pnl)}${t.retPct != null ? ` (${t.retPct >= 0 ? '+' : ''}${t.retPct}%)` : ''}` : '—'}</span>
-          <span className="muted" style={{ fontSize: 12 }}>{t.reason}</span>
+    <div>
+      <div className="table paper-ledger">
+        <div className="tr head">
+          <span onClick={() => toggleSort('day')} style={{ cursor: 'pointer' }}>Day{arrow('day')}</span>
+          <span onClick={() => toggleSort('strategy')} style={{ cursor: 'pointer' }}>Method{arrow('strategy')}</span>
+          <span onClick={() => toggleSort('symbol')} style={{ cursor: 'pointer' }}>Symbol{arrow('symbol')}</span>
+          <span onClick={() => toggleSort('side')} style={{ cursor: 'pointer' }}>Side{arrow('side')}</span>
+          <span onClick={() => toggleSort('qty')} style={{ cursor: 'pointer' }}>Qty{arrow('qty')}</span>
+          <span onClick={() => toggleSort('price')} style={{ cursor: 'pointer' }}>Price{arrow('price')}</span>
+          <span onClick={() => toggleSort('pnl')} style={{ cursor: 'pointer' }}>P&L{arrow('pnl')}</span>
+          <span onClick={() => toggleSort('reason')} style={{ cursor: 'pointer' }}>Why{arrow('reason')}</span>
         </div>
-      ))}
+        {visible.map((t, i) => (
+          <div key={`${t.day}-${t.strategy}-${t.symbol}-${t.side}-${i}`} className="tr">
+            <span className="mono muted">{t.day}</span>
+            <span className="muted">{STRAT_META_LABELS.get(t.strategy) ?? t.strategy}</span>
+            <span className="mono">{t.symbol}</span>
+            <span className={t.side === 'BUY' ? 'up' : 'down'}>{t.side}</span>
+            <span className="mono">{t.qty}</span>
+            <span className="mono">{inr(t.price, 2)}</span>
+            <span className={clsPnL(t.pnl)}>{t.side === 'SELL' ? `${inr(t.pnl)}${t.retPct != null ? ` (${t.retPct >= 0 ? '+' : ''}${t.retPct}%)` : ''}` : '—'}</span>
+            <span className="muted" style={{ fontSize: 12 }}>{t.reason}</span>
+          </div>
+        ))}
+      </div>
+      {visible.length < sorted.length && (
+        <button type="button" className="ts-more" style={{ marginTop: 10 }} onClick={() => setLimit((n) => n + PAGE)}>
+          Show {Math.min(PAGE, sorted.length - visible.length)} more · {sorted.length - visible.length} older fills hidden
+        </button>
+      )}
     </div>
   );
 }
@@ -606,12 +632,14 @@ export default function Paper() {
 
           <div className="panel reveal" style={{ marginBottom: 16 }}>
             <div className="panel-title">
-              <h3>Daily Paper trade</h3>
+              <h3>Daily Paper trade · {fullDate(d.date)}</h3>
               <span className="hint">
-                fresh ₹1,00,000 · 7 adaptive methods · news-aware · self-improving
+                {d.date === istToday() ? 'today’s session' : `published session · today is ${fullDate(istToday())}`}
+                {' · '}fresh ₹10,00,000 · buy and sell the same day · 7 adaptive methods · news-aware · self-improving
                 {d.status === 'open' && ' · market open'}
                 {d.status === 'closed' && ' · session closed'}
                 {d.status === 'holiday' && ' · no session today'}
+                {d.status === 'pre-open' && ' · pre-open'}
               </span>
             </div>
             <div className="stat-grid" style={{ marginBottom: 12 }}>
@@ -691,7 +719,7 @@ export default function Paper() {
                           title={dd.ledger?.length ? 'Show all trades' : 'No stored ledger for this day'}
                         >
                           <span className="mono muted">{dd.date} {dd.ledger?.length ? (expanded ? '▾' : '▸') : ''}</span>
-                          <span className={clsPnL(dd.dayPnl)}>{inr(dd.dayPnl)} ({dd.dayPnl >= 0 ? '+' : ''}{((dd.dayPnl / 100000) * 100).toFixed(2)}%)</span>
+                          <span className={clsPnL(dd.dayPnl)}>{inr(dd.dayPnl)} ({dd.dayPnl >= 0 ? '+' : ''}{((dd.dayPnl / (dd.equity - dd.dayPnl || 1)) * 100).toFixed(2)}%)</span>
                           <span className="mono">{dd.trades}</span>
                           <span className="mono">{dd.winPct != null ? `${dd.winPct}%` : '—'}</span>
                         </div>
@@ -713,7 +741,7 @@ export default function Paper() {
         <div className="panel reveal" style={{ marginBottom: 16 }}>
           <div className="panel-title">
             <h3>Daily Paper trade</h3>
-            <span className="hint">fresh ₹1,00,000 every market day · intraday 5-min bars · 5 methods</span>
+            <span className="hint">fresh ₹10,00,000 every market day · intraday, squared off at the close</span>
           </div>
           <div className="empty">Daily paper trades refresh during market hours — first session runs at 09:16 IST.</div>
         </div>
@@ -844,7 +872,8 @@ export default function Paper() {
             <div className="panel-title">
               <h3>Full transaction list</h3>
               <span className="hint">
-                every fill · 8% hard stop · 12% trailing stop · 20-day max hold
+                {r.asOf ? `${fullDate(r.asOf)} is the latest swing day` : 'latest swing day'}
+                {' · '}every fill · 8% hard stop · 12% trailing stop · 20-day max hold
                 {r.slPct ? ` · SL ${(r.slPct * 100).toFixed(0)}%` : ''}
               </span>
             </div>

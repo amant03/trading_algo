@@ -183,8 +183,8 @@ export default function WeekDuel() {
             </div>
             <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.55 }}>
               <b>Historical replay</b>, not live trading: each of the last 5 NSE sessions is replayed with a fresh{' '}
-              <b>₹10,000</b> split across the methods. <b>1% hard stop-loss, no take-profit.</b> For today&apos;s live
-              positions, see the Live tab.
+              <b>{inr(store.config.inCapital)}</b> split across the methods. Each buy is sold the same day.
+              <b> 1% hard stop-loss, squared off at the close.</b> For today&apos;s live positions, see the Live tab.
             </div>
           </div>
           <WeekSpark cards={store.in} />
@@ -222,7 +222,7 @@ export default function WeekDuel() {
                     <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.08em', color: '#ffb020', background: 'rgba(255,176,32,0.12)', borderRadius: 4, padding: '2px 6px' }}>
                       NSE
                     </span>
-                    <span className="muted" style={{ fontSize: 11 }}>₹10,000 fresh</span>
+                    <span className="muted" style={{ fontSize: 11 }}>{inr(card.startCapital)} fresh</span>
                   </div>
                   <div className={cls(card.dayPnl)} style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.1 }}>
                     {inr(card.dayPnl)}{' '}
