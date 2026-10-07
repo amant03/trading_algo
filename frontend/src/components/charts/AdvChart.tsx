@@ -24,10 +24,11 @@ export const ADV_RANGES = RANGES;
 export type AdvRangeId = RangeId;
 
 const PAD_L = 8;
-const PAD_R = 62;
-const PAD_T = 28;
+const PAD_R = 84;
+const PAD_T = 22;
 const VOL_H = 52;
 const FOOTER = 22;
+const AXIS = 12;
 const SNAP_SEC = 5 * 86400;
 
 interface ChartMark {
@@ -147,7 +148,7 @@ export default function AdvChart({
     const ro = new ResizeObserver(apply);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [rows.length]);
 
   useEffect(() => {
     let cancelled = false;
@@ -307,7 +308,7 @@ export default function AdvChart({
           width="100%"
           height={h}
           viewBox={`0 0 ${Math.max(w, 1)} ${h}`}
-          preserveAspectRatio="none"
+          preserveAspectRatio="xMidYMid meet"
           style={{ width: '100%', height: h, display: 'block' }}
           onMouseMove={(e) => {
           const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
@@ -322,31 +323,35 @@ export default function AdvChart({
         }}>
           <defs>
             <linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={upG ? '#00d68f' : '#ff5c5c'} stopOpacity="0.28" />
-              <stop offset="100%" stopColor={upG ? '#00d68f' : '#ff5c5c'} stopOpacity="0.02" />
+              <stop offset="0%" stopColor={upG ? 'var(--up)' : 'var(--down)'} stopOpacity="0.22" />
+              <stop offset="100%" stopColor={upG ? 'var(--up)' : 'var(--down)'} stopOpacity="0.02" />
             </linearGradient>
           </defs>
           {priceTicks.map((p, k) => (
             <g key={k}>
-              <line x1={PAD_L} y1={y(p)} x2={w - PAD_R} y2={y(p)} stroke="rgba(232,239,246,0.05)" strokeWidth="1" />
-              <text x={w - PAD_R + 6} y={y(p) + 3} fill="#5c6a7d" style={{ fontSize: 10, fontFamily: "'IBM Plex Mono', monospace" }}>
+              <line x1={PAD_L} y1={y(p)} x2={w - PAD_R} y2={y(p)} stroke="var(--line)" strokeWidth="1" />
+              <text x={w - 8} y={y(p)} fill="var(--dim)" textAnchor="end" dominantBaseline="middle" style={{ fontSize: AXIS, fontFamily: 'var(--font-mono)' }}>
                 {fmt(p)}
               </text>
             </g>
           ))}
-          {timeTicks.map((ti, k) => (
-            <text key={k} x={x(ti)} y={h - 6} fill="#5c6a7d" textAnchor="middle" style={{ fontSize: 10, fontFamily: "'IBM Plex Mono', monospace" }}>
-              {fmtT(istDate(rows[ti].t), range)}
-            </text>
-          ))}
+          {timeTicks.map((ti, k) => {
+            const edge = k === 0 ? 'start' : k === timeTicks.length - 1 ? 'end' : 'middle';
+            const tx = k === 0 ? PAD_L : k === timeTicks.length - 1 ? w - PAD_R : x(ti);
+            return (
+              <text key={k} x={tx} y={h - 6} fill="var(--dim)" textAnchor={edge} style={{ fontSize: AXIS, fontFamily: 'var(--font-mono)' }}>
+                {fmtT(istDate(rows[ti].t), range)}
+              </text>
+            );
+          })}
 
           {rows.map((r, i) => (
-            <rect key={`v${i}`} x={x(i) - cw / 2} y={sv(i)} width={cw} height={h - FOOTER - sv(i)} fill={r.c >= r.o ? 'rgba(0,214,143,0.22)' : 'rgba(255,92,92,0.22)'} />
+            <rect key={`v${i}`} x={x(i) - cw / 2} y={sv(i)} width={cw} height={h - FOOTER - sv(i)} fill={r.c >= r.o ? 'var(--up)' : 'var(--down)'} opacity="0.28" />
           ))}
 
           {isDay && prevClose > low && prevClose < high && (
             <g>
-              <line x1={PAD_L} x2={w - PAD_R} y1={y(prevClose)} y2={y(prevClose)} stroke="rgba(232,239,246,0.35)" strokeWidth="1" strokeDasharray="4 4" />
+              <line x1={PAD_L} x2={w - PAD_R} y1={y(prevClose)} y2={y(prevClose)} stroke="var(--line2)" strokeWidth="1" strokeDasharray="4 4" />
             </g>
           )}
 
@@ -358,10 +363,10 @@ export default function AdvChart({
           ) : (
             <>
               {[
-                { data: sma20, color: '#ffb020', label: 'SMA20' },
-                { data: sma50, color: '#9d7bff', label: 'SMA50' },
-                { data: sma200, color: '#3fd0ea', label: 'SMA200' },
-                { data: ema21, color: '#ff8fc7', label: 'EMA21' },
+                { data: sma20, color: 'var(--amber)', label: 'SMA20' },
+                { data: sma50, color: 'var(--violet)', label: 'SMA50' },
+                { data: sma200, color: 'var(--muted)', label: 'SMA200' },
+                { data: ema21, color: 'var(--text)', label: 'EMA21' },
               ]
                 .filter((s) => s.data.some((v) => v != null))
                 .map((s) => {
@@ -385,8 +390,8 @@ export default function AdvChart({
           {livePrice != null && livePrice > low && livePrice < high && (
             <g>
               <line x1={PAD_L} x2={w - PAD_R} y1={y(livePrice)} y2={y(livePrice)} stroke="var(--amber)" strokeWidth="1" strokeDasharray="5 4" opacity="0.9" />
-              <rect x={w - PAD_R + 2} y={y(livePrice) - 9} width="56" height="18" rx="4" fill="rgba(255,176,32,0.18)" stroke="rgba(255,176,32,0.5)" />
-              <text x={w - PAD_R + 30} y={y(livePrice) + 3.5} textAnchor="middle" fill="#ffb020" style={{ fontSize: 10.5, fontWeight: 600, fontFamily: "'IBM Plex Mono', monospace" }}>
+              <rect x={w - PAD_R + 6} y={y(livePrice) - 9} width={PAD_R - 12} height="18" rx="4" fill="var(--amber-soft)" stroke="var(--amber)" />
+              <text x={w - 8} y={y(livePrice) + 4} textAnchor="end" fill="var(--amber)" style={{ fontSize: AXIS, fontWeight: 600, fontFamily: 'var(--font-mono)' }}>
                 {fmt(livePrice)}
               </text>
             </g>
@@ -398,12 +403,12 @@ export default function AdvChart({
             const cy = onPrice
               ? Math.max(PAD_T + 10, y(rows[m.i].h) - 12)
               : h - FOOTER - VOL_H + 10;
-            const fill = m.kind === 'D' ? '#ffb020' : m.kind === 'N' ? '#b388ff' : m.upcoming ? '#0e1c22' : m.beat === false ? '#ffb020' : '#00d68f';
-            const ink = m.upcoming && m.kind === 'E' ? '#3fd0ea' : '#0b0f17';
+            const fill = m.kind === 'D' ? 'var(--amber)' : m.kind === 'N' ? 'var(--violet)' : m.upcoming ? 'var(--panel)' : m.beat === false ? 'var(--down)' : 'var(--up)';
+            const ink = m.upcoming && m.kind === 'E' ? 'var(--amber)' : 'var(--ink)';
             return (
               <g key={`${m.kind}-${m.i}-${n}`}>
-                <circle cx={cx} cy={cy} r="8" fill={fill} stroke={m.upcoming ? '#3fd0ea' : 'rgba(0,0,0,0.35)'} strokeWidth="1" />
-                <text x={cx} y={cy + 3.2} textAnchor="middle" fill={ink} style={{ fontSize: m.kind === 'N' ? 8 : 9, fontWeight: 800, fontFamily: "'IBM Plex Mono', monospace" }}>
+                <circle cx={cx} cy={cy} r="7" fill={fill} stroke={m.upcoming ? 'var(--amber)' : 'var(--line2)'} strokeWidth="1" />
+                <text x={cx} y={cy + 3.5} textAnchor="middle" fill={ink} style={{ fontSize: 10, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
                   {m.kind === 'N' ? 'N' : m.label}
                 </text>
               </g>
@@ -412,7 +417,7 @@ export default function AdvChart({
 
           {hrow && hoverI != null && (
             <g>
-              <line x1={x(hoverI)} x2={x(hoverI)} y1={PAD_T} y2={h - FOOTER} stroke="rgba(232,239,246,0.55)" strokeWidth="1" />
+              <line x1={x(hoverI)} x2={x(hoverI)} y1={PAD_T} y2={h - FOOTER} stroke="var(--muted)" strokeWidth="1" />
               <circle cx={x(hoverI)} cy={y(hrow.c)} r="3.5" fill={stroke} stroke="#0b0f17" strokeWidth="1" />
             </g>
           )}
