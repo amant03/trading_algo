@@ -3,9 +3,11 @@
 // use candlesticks with SMA overlays.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { HistoryRow } from '../../types';
+import type { HistoryRow, NewsArticle } from '../../types';
 import { sma, ema } from '../../indicators';
 import { fmtCompact, fmt } from '../../format';
+import { loadSymbolEvents, type ChartDiv, type ChartEarn } from '../../lib/chartEvents';
+import { useLive } from '../../ws';
 
 const RANGES = [
   { id: '1d', label: '1D' },
@@ -26,6 +28,71 @@ const PAD_R = 62;
 const PAD_T = 28;
 const VOL_H = 52;
 const FOOTER = 22;
+const SNAP_SEC = 5 * 86400;
+
+interface ChartMark {
+  i: number;
+  kind: 'E' | 'D' | 'N';
+  upcoming: boolean;
+  beat: boolean | null;
+  label: string;
+  lines: string[];
+  xNudge: number;
+}
+
+function surprisePct(actual: number | null, est: number | null): string | null {
+  if (actual == null || est == null || est === 0) return null;
+  const p = ((actual - est) / Math.abs(est)) * 100;
+  return `${p >= 0 ? '+' : ''}${p.toFixed(1)}%`;
+}
+
+function beatOf(actual: number | null, est: number | null): boolean | null {
+  if (actual == null || est == null) return null;
+  return actual >= est;
+}
+
+function earnLines(e: ChartEarn): string[] {
+  const epsSurp = surprisePct(e.eps, e.epsEst);
+  const revSurp = surprisePct(e.revenue, e.revenueEst);
+  const lines = [
+    e.upcoming ? `Next earnings${e.period ? ` · ${e.period}` : ''}` : `Earnings${e.period ? ` · ${e.period}` : ''}`,
+  ];
+  if (e.eps != null || e.epsEst != null) {
+    lines.push(`EPS ${e.eps != null ? fmt(e.eps) : '—'} vs ${e.epsEst != null ? fmt(e.epsEst) : '—'}${epsSurp ? ` · ${epsSurp}` : ''}`);
+  }
+  if (e.revenue != null || e.revenueEst != null) {
+    lines.push(`Revenue ${e.revenue != null ? fmtCompact(e.revenue) : '—'} vs ${e.revenueEst != null ? fmtCompact(e.revenueEst) : '—'}${revSurp ? ` · ${revSurp}` : ''}`);
+  }
+  return lines;
+}
+
+function divLines(d: ChartDiv): string[] {
+  return [
+    d.upcoming ? 'Upcoming dividend' : 'Dividend',
+    d.amount != null ? `₹${fmt(d.amount)} ex-date` : 'Ex-date',
+  ];
+}
+
+function nearestBar(rows: HistoryRow[], t: number): number | null {
+  if (!rows.length) return null;
+  if (t < rows[0].t - SNAP_SEC || t > rows[rows.length - 1].t + SNAP_SEC) return null;
+  let best = 0;
+  let bestD = Infinity;
+  for (let i = 0; i < rows.length; i++) {
+    const d = Math.abs(rows[i].t - t);
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  }
+  return best;
+}
+
+function newsTime(article: NewsArticle): number | null {
+  const ms = Date.parse(article.publishedAt);
+  if (!Number.isFinite(ms)) return null;
+  return Math.floor(ms / 1000);
+}
 
 function istDate(epochSec: number): Date {
   return new Date(epochSec * 1000);
@@ -66,6 +133,8 @@ export default function AdvChart({
   const [w, setW] = useState(640);
   const [hoverI, setHoverI] = useState<number | null>(null);
   const [hoverX, setHoverX] = useState<number | null>(null);
+  const [events, setEvents] = useState<{ earnings: ChartEarn[]; dividends: ChartDiv[] } | null>(null);
+  const news = useLive((s) => s.newsBySymbol[symbol]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -79,6 +148,17 @@ export default function AdvChart({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setEvents(null);
+    loadSymbolEvents(symbol).then((ev) => {
+      if (!cancelled) setEvents(ev);
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [symbol]);
 
   const isDay = range === '1d';
   const closes = useMemo(() => rows.map((r) => r.c), [rows]);
@@ -134,7 +214,54 @@ export default function AdvChart({
   const end = livePrice && livePrice > 0 ? livePrice : last.c;
   const upG = end >= ref;
 
+  const marks = (() => {
+    const out: ChartMark[] = [];
+    const used = new Set<string>();
+    const push = (mark: ChartMark) => {
+      const key = `${mark.kind}:${mark.i}`;
+      if (used.has(key)) return;
+      used.add(key);
+      out.push(mark);
+    };
+    for (const e of events?.earnings ?? []) {
+      const i = nearestBar(rows, e.t);
+      if (i == null) continue;
+      const beat = e.upcoming ? null : beatOf(e.eps, e.epsEst) ?? beatOf(e.revenue, e.revenueEst);
+      push({ i, kind: 'E', upcoming: Boolean(e.upcoming), beat, label: 'E', lines: earnLines(e), xNudge: 0 });
+    }
+    for (const d of events?.dividends ?? []) {
+      const i = nearestBar(rows, d.t);
+      if (i == null) continue;
+      push({ i, kind: 'D', upcoming: Boolean(d.upcoming), beat: null, label: 'D', lines: divLines(d), xNudge: 0 });
+    }
+    const newsByBar = new Map<number, NewsArticle[]>();
+    for (const article of news ?? []) {
+      const t = newsTime(article);
+      if (t == null) continue;
+      const i = nearestBar(rows, t);
+      if (i == null) continue;
+      const list = newsByBar.get(i) ?? [];
+      list.push(article);
+      newsByBar.set(i, list);
+    }
+    for (const [i, articles] of newsByBar) {
+      const titles = articles.slice(0, 3).map((a) => a.title);
+      const extra = articles.length > 3 ? [`+${articles.length - 3} more`] : [];
+      push({
+        i,
+        kind: 'N',
+        upcoming: false,
+        beat: null,
+        label: String(articles.length),
+        lines: [`News · ${articles.length}`, ...titles, ...extra],
+        xNudge: used.has(`E:${i}`) ? 16 : 0,
+      });
+    }
+    return out;
+  })();
+
   const hrow = hoverI != null ? rows[hoverI] : null;
+  const hoverMarks = hoverI == null ? [] : marks.filter((m) => m.i === hoverI);
   const lastSma20 = sma20[sma20.length - 1];
   const lastSma50 = sma50[sma50.length - 1];
   const lastSma200 = sma200[sma200.length - 1];
@@ -265,6 +392,24 @@ export default function AdvChart({
             </g>
           )}
 
+          {marks.map((m, n) => {
+            const cx = x(m.i) + m.xNudge;
+            const onPrice = m.kind === 'D';
+            const cy = onPrice
+              ? Math.max(PAD_T + 10, y(rows[m.i].h) - 12)
+              : h - FOOTER - VOL_H + 10;
+            const fill = m.kind === 'D' ? '#ffb020' : m.kind === 'N' ? '#b388ff' : m.upcoming ? '#0e1c22' : m.beat === false ? '#ffb020' : '#00d68f';
+            const ink = m.upcoming && m.kind === 'E' ? '#3fd0ea' : '#0b0f17';
+            return (
+              <g key={`${m.kind}-${m.i}-${n}`}>
+                <circle cx={cx} cy={cy} r="8" fill={fill} stroke={m.upcoming ? '#3fd0ea' : 'rgba(0,0,0,0.35)'} strokeWidth="1" />
+                <text x={cx} y={cy + 3.2} textAnchor="middle" fill={ink} style={{ fontSize: m.kind === 'N' ? 8 : 9, fontWeight: 800, fontFamily: "'IBM Plex Mono', monospace" }}>
+                  {m.kind === 'N' ? 'N' : m.label}
+                </text>
+              </g>
+            );
+          })}
+
           {hrow && hoverI != null && (
             <g>
               <line x1={x(hoverI)} x2={x(hoverI)} y1={PAD_T} y2={h - FOOTER} stroke="rgba(232,239,246,0.55)" strokeWidth="1" />
@@ -292,6 +437,13 @@ export default function AdvChart({
               Vol <b>{hrow.v.toLocaleString('en-IN')}</b>
               <span className="dim">({fmtCompact(hrow.v)})</span>
             </div>
+            {hoverMarks.map((m, n) => (
+              <div key={n} className="advchart-tip-event">
+                {m.lines.map((line, li) => (
+                  <div key={li} className={li === 0 ? 'advchart-tip-event-title' : ''}>{line}</div>
+                ))}
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -302,6 +454,11 @@ export default function AdvChart({
         <span>L <span className="down">{fmt(hrow?.l ?? last.l)}</span></span>
         <span>C {fmt(hrow?.c ?? last.c)}</span>
         <span>Vol {fmtCompact(hrow?.v ?? last.v)}</span>
+        <span className="advchart-legend">
+          <i className="mk e" /> E earnings
+          <i className="mk d" /> D dividend
+          <i className="mk n" /> N news
+        </span>
         {!isDay && (
           <span className="advchart-foot-stats">
             {[['SMA20', lastSma20], ['SMA50', lastSma50], ['SMA200', lastSma200], ['EMA21', lastEma21]]

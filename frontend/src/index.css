@@ -921,6 +921,13 @@ a.news-headline:hover { color: var(--cyan); }
 .advchart-tip-vol { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); margin-top: 4px; border-top: 1px solid var(--line); padding-top: 5px; }
 .advchart-tip-vol b { color: var(--text); font-weight: 600; }
 .advchart-tip-vol .dim { margin-left: 4px; }
+.advchart-tip-event { margin-top: 6px; border-top: 1px solid var(--line); padding-top: 5px; font-size: 11px; color: var(--muted); }
+.advchart-tip-event-title { color: var(--text); font-weight: 700; font-size: 11.5px; }
+.advchart-legend { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; color: var(--dim); }
+.advchart-legend .mk { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-left: 6px; }
+.advchart-legend .mk.e { background: #00d68f; }
+.advchart-legend .mk.d { background: #ffb020; }
+.advchart-legend .mk.n { background: #b388ff; }
 .advchart-footer {
   display: flex;
   gap: 18px;

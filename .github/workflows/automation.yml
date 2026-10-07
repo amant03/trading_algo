@@ -103,6 +103,16 @@ jobs:
       - name: Technical screen (TradingView India)
         run: node node_modules/tsx/dist/cli.mjs scripts/ci/tech-screen.ts
 
+      # Earnings, revenue, and dividend marks for every NSE price chart.
+      # Same India scanner as the technical screen. Runs on every automation.
+      - name: Pre-stage previous chart events
+        run: |
+          curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/chart-events.json \
+            -o frontend/public/chart-events.json || echo "no previous chart events — first run"
+
+      - name: Chart events (earnings, revenue, dividends)
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/chart-events.ts
+
       # ---- market-hours news only (no DB / services / fundamentals) -------
       - name: Refresh per-stock news (market hours)
         if: env.MODE == 'news'
@@ -413,6 +423,7 @@ jobs:
           git add frontend/public/dependencies.json 2>/dev/null || true
           git add frontend/public/tv-rank.json 2>/dev/null || true
           git add frontend/public/tech-screen.json 2>/dev/null || true
+          git add frontend/public/chart-events.json 2>/dev/null || true
           git add frontend/public/fii-dii.json 2>/dev/null || true
           git add frontend/public/sector-news.json 2>/dev/null || true
           git add frontend/public/sectors.json 2>/dev/null || true

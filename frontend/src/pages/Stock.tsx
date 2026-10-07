@@ -439,7 +439,7 @@ export default function Stock() {
   const [signals, setSignals] = useState<Signal[]>([]);
   const [stockNews, setStockNews] = useState<NewsItem[]>([]);
   const [stockNewsArt, setStockNewsArt] = useState<NewsArticle[]>([]);
-  const [ovRange, setOvRange] = useState<AdvRangeId>('1d');
+  const [ovRange, setOvRange] = useState<AdvRangeId>('6mo');
   const [dayRows, setDayRows] = useState<HistoryRow[]>([]);
   const [dayLoading, setDayLoading] = useState(true);
   const [aiPrompt, setAiPrompt] = useState<string | null>(null);
@@ -491,7 +491,7 @@ export default function Stock() {
     setStockNews([]);
     setStockNewsArt([]);
     setTab('overview');
-    setOvRange('1d');
+    setOvRange('6mo');
     setDayRows([]);
     void refreshSymbols([upper]);
     // any symbol — inside or outside the nightly universe — gets full
