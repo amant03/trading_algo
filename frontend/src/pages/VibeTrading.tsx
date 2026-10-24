@@ -5,7 +5,18 @@ import { FX_TICKER, SWARM, quoteArbitrage, type ArbRow, type FundStock, type Jou
 import { STRATEGY_LABEL, dailyReturns, edgeDensity, paramsLabel, type Bar, type Improvement } from '../vibe/engine';
 import { findInstrument, localDate } from '../vibe/markets';
 import {
-  factorSnapshot,
+  AlphaZoo,
+  BacktestDesk,
+  BrokersDesk,
+  DataDesk,
+  LabNote,
+  MemoryDesk,
+  PortfolioDesk,
+  SkillsDesk,
+  Tutorial,
+  Workflow,
+} from '../vibe/VibeDesk';
+import {
   fundSlice,
   journalSlice,
   researchBars,
@@ -31,15 +42,21 @@ interface Loaded {
   agents: AgentLines;
 }
 
-type Section = 'review' | 'shadow' | 'swarm' | 'alpha' | 'lab' | 'sources';
+type Section = 'research' | 'backtest' | 'portfolio' | 'shadow' | 'swarm' | 'skills' | 'alpha' | 'data' | 'brokers' | 'lab' | 'memory' | 'tutorial';
 
 const SECTIONS: { id: Section; label: string }[] = [
-  { id: 'review', label: 'Review' },
+  { id: 'research', label: 'Research' },
+  { id: 'backtest', label: 'Backtest' },
+  { id: 'portfolio', label: 'Portfolio' },
   { id: 'shadow', label: 'Shadow' },
   { id: 'swarm', label: 'Swarm' },
+  { id: 'skills', label: 'Skills' },
   { id: 'alpha', label: 'Alpha' },
+  { id: 'data', label: 'Data' },
+  { id: 'brokers', label: 'Brokers' },
   { id: 'lab', label: 'Lab' },
-  { id: 'sources', label: 'Sources' },
+  { id: 'memory', label: 'Memory' },
+  { id: 'tutorial', label: 'Tutorial' },
 ];
 
 const inr = (n: number) => `${n < 0 ? '-' : ''}₹${Math.abs(Math.round(n)).toLocaleString('en-IN')}`;
@@ -65,9 +82,19 @@ export default function VibeTrading() {
   const [edge, setEdge] = useState<string>('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [section, setSection] = useState<Section>('review');
+  const [section, setSection] = useState<Section>('research');
   const [swarm, setSwarm] = useState(SWARM[0].id);
   const [memory, setMemory] = useState<string | null>(null);
+  const [goal, setGoal] = useState(() => localStorage.getItem('vibe-goal-v1') ?? '');
+  const [halted, setHalted] = useState(() => localStorage.getItem('vibe-halt-v1') === '1');
+  const [history, setHistory] = useState<{ at: string; line: string }[]>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem('vibe-run-history-v1') ?? '[]') as { at: string; line: string }[];
+      return Array.isArray(raw) ? raw : [];
+    } catch {
+      return [];
+    }
+  });
   const filled = names.filter((name) => name.trim()).length;
 
   async function run(event: FormEvent) {
@@ -155,7 +182,16 @@ export default function VibeTrading() {
       } else {
         setMemory(null);
       }
-      setSection('review');
+      const entry = {
+        at: new Date().toISOString().slice(0, 16).replace('T', ' '),
+        line: loaded.map((card) => `${card.symbol} ${card.chosen ? `${STRATEGY_LABEL[card.chosen.strategy]} ${paramsLabel(card.chosen.strategy, card.chosen.adopted)}` : 'seed kept'}`).join(' · '),
+      };
+      setHistory((prev) => {
+        const next = [entry, ...prev].slice(0, 8);
+        localStorage.setItem('vibe-run-history-v1', JSON.stringify(next));
+        return next;
+      });
+      setSection('research');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The run failed');
     } finally {
@@ -169,7 +205,7 @@ export default function VibeTrading() {
         <div>
           <div className="vibe-kicker">Vibe-Trading</div>
           <h1>Type two or three names.</h1>
-          <p>Nothing is selected for you. After you run those names, the desk pulls their daily bars, walks each rule family forward, and keeps a parameter change only when the last 30% of bars still clears the risk gate.</p>
+          <p>Nothing is selected for you. The sections below are the research desk: backtest, portfolio, shadow, swarm, skills, alpha, data, and brokers. Numbers appear after you type two or three symbols and run them.</p>
         </div>
       </header>
 
@@ -193,42 +229,44 @@ export default function VibeTrading() {
       </form>
 
       {error && <div className="vibe-error">{error}</div>}
+      {busy && <p className="vibe-wait">Pulling daily bars and testing the rule families on the first 70% of each sample.</p>}
       {memory && <p className="vibe-note">Remembered in this browser: {memory}</p>}
 
-      {!cards && !busy && <p className="vibe-wait">The board stays empty until you type at least two symbols. A company name from the fundamental book works too.</p>}
-      {busy && <p className="vibe-wait">Pulling daily bars and testing the rule families on the first 70% of each sample.</p>}
+      <nav className="vibe-tabs" aria-label="Vibe-Trading sections">
+        {SECTIONS.map((item) => (
+          <button key={item.id} type="button" className={section === item.id ? 'on' : ''} onClick={() => setSection(item.id)}>
+            {item.label}
+          </button>
+        ))}
+      </nav>
 
       {cards && (
-        <>
-          <div className="vibe-board" aria-label="Names you entered">
-            {cards.map((card) => (
-              <div key={card.ticker} className="vibe-chip">
-                <span className="vibe-chip-mkt">{card.ticker}</span>
-                <span className="vibe-chip-sym">{card.symbol}</span>
-                <span className={card.changePct >= 0 ? 'up' : 'down'}>
-                  {formatQuote(card.last, card.currency)} {card.currency} {fmtPct(card.changePct)}
-                </span>
-              </div>
-            ))}
-          </div>
-          <p className="vibe-note">{edge}</p>
-
-          <nav className="vibe-tabs" aria-label="Vibe-Trading sections">
-            {SECTIONS.map((item) => (
-              <button key={item.id} type="button" className={section === item.id ? 'on' : ''} onClick={() => setSection(item.id)}>
-                {item.label}
-              </button>
-            ))}
-          </nav>
-
-          {section === 'review' && <Review cards={cards} gaps={gaps} />}
-          {section === 'shadow' && <Shadow cards={cards} />}
-          {section === 'swarm' && <Swarm cards={cards} swarm={swarm} setSwarm={setSwarm} gaps={gaps} />}
-          {section === 'alpha' && <Alpha cards={cards} />}
-          {section === 'lab' && <Lab cards={cards} edge={edge} />}
-          {section === 'sources' && <Sources />}
-        </>
+        <div className="vibe-board" aria-label="Names you entered">
+          {cards.map((card) => (
+            <div key={card.ticker} className="vibe-chip">
+              <span className="vibe-chip-mkt">{card.ticker}</span>
+              <span className="vibe-chip-sym">{card.symbol}</span>
+              <span className={card.changePct >= 0 ? 'up' : 'down'}>
+                {formatQuote(card.last, card.currency)} {card.currency} {fmtPct(card.changePct)}
+              </span>
+            </div>
+          ))}
+        </div>
       )}
+      {cards && <p className="vibe-note">{edge}</p>}
+
+      {section === 'research' && (cards ? <Review cards={cards} gaps={gaps} /> : !busy && <p className="vibe-wait">Type at least two symbols. The board stays empty until you do.</p>)}
+      {section === 'backtest' && <BacktestDesk cards={cards} />}
+      {section === 'portfolio' && <PortfolioDesk cards={cards} />}
+      {section === 'shadow' && (cards ? <Shadow cards={cards} /> : <p className="vibe-wait">Type the names first. Shadow reads only those symbols in the paper journal.</p>)}
+      {section === 'swarm' && (cards ? <Swarm cards={cards} swarm={swarm} setSwarm={setSwarm} gaps={gaps} /> : <p className="vibe-wait">Type the names first. A preset with no book on them stays quiet.</p>)}
+      {section === 'skills' && <SkillsDesk cards={cards} />}
+      {section === 'alpha' && <AlphaZoo cards={cards} />}
+      {section === 'data' && <DataDesk cards={cards} />}
+      {section === 'brokers' && <BrokersDesk cards={cards} halted={halted} onHalt={(next) => { localStorage.setItem('vibe-halt-v1', next ? '1' : '0'); setHalted(next); }} />}
+      {section === 'lab' && <LabNote cards={cards} edge={edge} />}
+      {section === 'memory' && <MemoryDesk goal={goal} onGoal={(value) => { localStorage.setItem('vibe-goal-v1', value); setGoal(value); }} history={history} />}
+      {section === 'tutorial' && <Tutorial />}
 
       <p className="vibe-attrib">Route, ground, test, deliver. Figures come from the bars of the names you typed, and from the paper journal where those symbols already have a closed sell. No order is sent.</p>
     </div>
@@ -413,86 +451,6 @@ function swarmText(id: string, grounded: boolean, cards: Loaded[], gaps: ArbRow[
     return cards.map((card) => (card.fund ? `${card.symbol} PE ${card.fund.metrics?.pe ?? '—'}, ROE ${card.fund.metrics?.roe ?? '—'}, ${card.fund.verdict?.rating ?? 'unrated'}.` : `${card.symbol} has no fundamental row.`)).join(' ');
   }
   return cards.map((card) => card.agents.quant).join(' ');
-}
-
-function Alpha({ cards }: { cards: Loaded[] }) {
-  return (
-    <section className="vibe-card">
-      <h2>Alpha library</h2>
-      <p className="vibe-reason">Two or three names cannot support a cross-sectional rank correlation. These are each name’s own trailing returns. The published 191, 158, and 101 sets are not recomputed.</p>
-      <table className="vibe-table">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>20-bar momentum</th>
-            <th>5-bar reversal</th>
-          </tr>
-        </thead>
-        <tbody>
-          {cards.map((card) => {
-            const factor = factorSnapshot(card.bars);
-            return (
-              <tr key={card.ticker}>
-                <td>{card.symbol}</td>
-                <td>{factor.mom20 == null ? '—' : pct(factor.mom20)}</td>
-                <td>{factor.rev5 == null ? '—' : pct(factor.rev5)}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </section>
-  );
-}
-
-function Lab({ cards, edge }: { cards: Loaded[]; edge: string }) {
-  return (
-    <section className="vibe-card">
-      <div className="vibe-kicker">Research lab · names you typed</div>
-      <h2>What these samples paid</h2>
-      {cards.map((card) => (
-        <p key={card.ticker}>
-          {card.symbol}: {card.chosen ? `${STRATEGY_LABEL[card.chosen.strategy]} ${paramsLabel(card.chosen.strategy, card.chosen.adopted)} cleared the later bars at ${pct(card.chosen.testCandidate.metrics.totalReturn)}.` : 'no family cleared the later bars, so the seed stays.'} {card.journal.trades ? `The journal’s closed sells in it realized ${inr(card.journal.pnl)}.` : 'The journal has not closed a sell in it.'}
-        </p>
-      ))}
-      <p className="vibe-note">{edge}</p>
-    </section>
-  );
-}
-
-function Sources() {
-  const rows = [
-    ['Names you type', 'Yahoo daily', 'On run', 'Two years of bars, then the walk-forward'],
-    ['Paper journal', 'Closed sells', 'On run', 'Only the symbols you typed'],
-    ['Fundamentals', 'analysis.json', 'On run', 'PE, ROE, rating, and fair value when the symbol is in the book'],
-    ['USDINR', 'INR=X', 'When an ADR pair is typed', 'Translates the ADR into rupees'],
-    ['China A-shares, funds, options, filings', 'Not connected', 'Silent', 'A missing source stays blank'],
-  ];
-  return (
-    <section className="vibe-card">
-      <h2>Sources and engines</h2>
-      <p className="vibe-reason">The India delivery engine is the paper journal. The bars you request are priced, then backtested here. Live broker orders stay off.</p>
-      <table className="vibe-table">
-        <thead>
-          <tr>
-            <th>Input</th>
-            <th>Source</th>
-            <th>State</th>
-            <th>Use</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row[0]}>
-              {row.map((cell, index) => (
-                <td key={`${row[0]}-${index}`}>{cell}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </section>
-  );
 }
 
 function CloseChart({ bars, label }: { bars: Bar[]; label: string }) {

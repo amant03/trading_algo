@@ -129,11 +129,34 @@ export function stockAgents(ticker: string, runs: Improvement[], chosen: Improve
   return { quant, risk, shadow };
 }
 
-export function factorSnapshot(bars: Bar[]): { mom20: number | null; rev5: number | null } {
+export function factorSnapshot(bars: Bar[]): { mom20: number | null; rev5: number | null; lowVol: number | null } {
   const close = bars.map((bar) => bar.c);
   const last = close.length - 1;
-  if (last < 20 || !(close[last - 20] > 0) || !(close[last] > 0)) return { mom20: null, rev5: null };
+  if (last < 20 || !(close[last - 20] > 0) || !(close[last] > 0)) return { mom20: null, rev5: null, lowVol: null };
   const mom20 = close[last] / close[last - 20] - 1;
   const rev5 = close[last - 5] > 0 ? -(close[last] / close[last - 5] - 1) : null;
-  return { mom20, rev5 };
+  const rets: number[] = [];
+  for (let i = last - 19; i <= last; i++) {
+    if (!(close[i - 1] > 0)) return { mom20, rev5, lowVol: null };
+    rets.push(close[i] / close[i - 1] - 1);
+  }
+  const mean = rets.reduce((a, b) => a + b, 0) / rets.length;
+  const variance = rets.reduce((acc, value) => acc + (value - mean) ** 2, 0) / (rets.length - 1);
+  return { mom20, rev5, lowVol: -Math.sqrt(variance) };
+}
+
+export function screenFund(fund: FundStock | null): { pass: boolean; why: string } {
+  if (!fund) return { pass: false, why: 'Not in the fundamental book.' };
+  const mos = fund.verdict?.marginOfSafety;
+  const roe = fund.metrics?.roe ?? null;
+  const pe = fund.metrics?.pe ?? null;
+  const graham = fund.screens?.graham?.score ?? 0;
+  const buffett = fund.screens?.buffett?.score ?? 0;
+  const rating = fund.verdict?.rating ?? '';
+  if (mos == null || mos < 20 || mos > 80) return { pass: false, why: 'The fair-value gap is outside 20–80%.' };
+  if (roe == null || roe < 12) return { pass: false, why: 'ROE is missing or under 12%.' };
+  if (pe != null && (pe <= 0 || pe > 22)) return { pass: false, why: 'PE is outside 0–22.' };
+  if (rating === 'Sell' || rating === 'Strong Sell') return { pass: false, why: 'The stored rating is a sell.' };
+  if (graham < 55 && buffett < 55) return { pass: false, why: 'Neither the Graham nor the Buffett score clears 55.' };
+  return { pass: true, why: `${mos.toFixed(0)}% under the stored fair value, ROE ${roe.toFixed(1)}%.` };
 }
