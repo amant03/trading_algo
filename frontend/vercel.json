@@ -2,6 +2,8 @@
   "cleanUrls": false,
   "trailingSlash": false,
   "rewrites": [
+    { "source": "/robots.txt", "destination": "/api/robots" },
+    { "source": "/sitemap.xml", "destination": "/api/sitemap" },
     { "source": "/universe.json", "destination": "/universe.json" },
     { "source": "/snapshot.json", "destination": "/snapshot.json" },
     { "source": "/analysis.json", "destination": "/analysis.json" },
@@ -22,7 +24,8 @@
     "api/us.ts": { "maxDuration": 30 },
     "api/attractive.ts": { "maxDuration": 30 },
     "api/techscreen.ts": { "maxDuration": 30 },
-    "api/vibe.ts": { "maxDuration": 30 }
+    "api/vibe.ts": { "maxDuration": 30 },
+    "api/macro.ts": { "maxDuration": 30 }
   },
   "headers": [
     {

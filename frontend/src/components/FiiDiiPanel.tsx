@@ -35,6 +35,7 @@ const cls = (n: number | null | undefined): string => (n == null ? '' : n > 0 ? 
 
 export default function FiiDiiPanel() {
   const [file, setFile] = useState<FiiDiiFile | null>(null);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -54,19 +55,26 @@ export default function FiiDiiPanel() {
           // try next mirror
         }
       }
+      if (live) setFailed(true);
     })();
     return () => { live = false; };
   }, []);
 
-  if (!file) return null;
-  const days = file.days.slice(-14);
+  if (!file) {
+    return (
+      <div className="panel">
+        <div className="dim">{failed ? 'FII / DII tape is not available.' : 'Loading FII / DII cash flows…'}</div>
+      </div>
+    );
+  }
+  const days = file.days.slice(-7);
   const latest = file.days[file.days.length - 1];
   const maxAbs = Math.max(1, ...days.flatMap((d) => [Math.abs(d.fiiCash ?? 0), Math.abs(d.diiCash ?? 0)]));
 
   return (
-    <div className="panel reveal" style={{ marginBottom: 16 }}>
+    <div className="panel reveal">
       <div className="panel-title">
-        <h3>FII / DII activity — cash market, ₹ cr net</h3>
+        <h3>Cash market, ₹ cr net</h3>
         <span className="hint">
           {latest.fDate} · FPI eq (NSDL) {cr(latest.fpiEquityNet)}
         </span>

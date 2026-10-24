@@ -25,7 +25,7 @@ interface TechFile {
   error?: string;
 }
 
-const PAGE = 40;
+const PAGE = 8;
 
 function toneOf(rating: string | null | undefined): 'up' | 'down' | 'amber' {
   if (rating === 'Strong Buy' || rating === 'Buy') return 'up';
@@ -162,6 +162,7 @@ export default function LensBoard() {
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [picked, setPicked] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
   const userPick = useRef(false);
   const [lens, setLens] = useState<Lens>('combined');
   const [onlyBoth, setOnlyBoth] = useState(false);
@@ -293,8 +294,23 @@ export default function LensBoard() {
   const pick = (symbol: string, next?: Lens) => {
     userPick.current = true;
     setPicked(symbol);
+    setOpen(true);
     if (next) setLens(next);
   };
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
 
   const oscPoints = selectedTech?.points.filter((p) => p.group === 'oscillator') ?? [];
   const maPoints = selectedTech?.points.filter((p) => p.group === 'ma') ?? [];
@@ -302,17 +318,11 @@ export default function LensBoard() {
 
   return (
     <section className="lens-board">
-      <div className="panel-title" style={{ marginBottom: 8 }}>
-        <div>
-          <h3 style={{ textTransform: 'none', letterSpacing: 0, fontSize: 16 }}>Three lenses</h3>
-          <div className="hint" style={{ marginTop: 4, textTransform: 'none', letterSpacing: 0, lineHeight: 1.5 }}>
-            Technical is the daily TradingView rating (in.tradingview.com): 11 oscillators, equal weight, and 15 moving averages, equal weight, then those two groups at 50/50.
-            Fundamental is Buffett {Math.round(FUNDA_WEIGHTS.buffett * 100)}% · Lynch {Math.round(FUNDA_WEIGHTS.lynch * 100)}% · Graham {Math.round(FUNDA_WEIGHTS.graham * 100)}%.
-            Techno + fundamental is {Math.round(COMBINED_HALF * 100)}% technical and {Math.round(COMBINED_HALF * 100)}% fundamental.
-            {source ? ` ${source}.` : ''}
-            {asOf ? ` As of ${new Date(asOf).toLocaleString()}.` : ''}
-          </div>
-        </div>
+      <div className="hint" style={{ marginBottom: 10, textTransform: 'none', letterSpacing: 0, lineHeight: 1.5 }}>
+        Technical {Math.round(COMBINED_HALF * 100)}% · fundamental {Math.round(COMBINED_HALF * 100)}%
+        (Buffett {Math.round(FUNDA_WEIGHTS.buffett * 100)} · Lynch {Math.round(FUNDA_WEIGHTS.lynch * 100)} · Graham {Math.round(FUNDA_WEIGHTS.graham * 100)}).
+        {source ? ` ${source}.` : ''}
+        {asOf ? ` As of ${new Date(asOf).toLocaleString()}.` : ''}
       </div>
 
       {err && <div className="empty" style={{ marginBottom: 10 }}>{err}</div>}
@@ -324,17 +334,27 @@ export default function LensBoard() {
         <ScoreChart title="Techno + fundamental" hint="50 / 50" rows={combinedChart} active={picked} onPick={(s) => pick(s, 'combined')} />
       </div>
 
-      {picked && (
-        <div className="panel" style={{ marginBottom: 16 }}>
+      {open && picked && (
+        <div className="lens-modal-back" onClick={() => setOpen(false)}>
+        <div
+          className="panel lens-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="lens-modal-title"
+          onClick={(e) => e.stopPropagation()}
+        >
           <div className="panel-title">
             <div>
-              <h3>{picked} — every data point</h3>
+              <h3 id="lens-modal-title">{picked}</h3>
               <div className="hint" style={{ marginTop: 4, textTransform: 'none', letterSpacing: 0 }}>
                 {selectedFunda?.name ?? selectedTech?.name ?? ''}
                 {selectedTech?.sector || selectedFunda?.sector ? ` · ${selectedFunda?.sector || selectedTech?.sector}` : ''}
               </div>
             </div>
-            <button type="button" className="lens-open" onClick={() => navigate(`/stock/${picked}`)}>Open stock</button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="button" className="lens-open" onClick={() => navigate(`/stock/${picked}`)}>Open stock</button>
+              <button type="button" className="lens-open" onClick={() => setOpen(false)}>Close</button>
+            </div>
           </div>
 
           <div className="lens-formula">
@@ -408,6 +428,7 @@ export default function LensBoard() {
               <div className="empty">No fundamental file for {picked}.</div>
             )}
           </div>
+        </div>
         </div>
       )}
 

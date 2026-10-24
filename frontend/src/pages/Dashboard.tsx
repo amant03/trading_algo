@@ -9,6 +9,9 @@ import NewsFeed from '../components/NewsFeed';
 import NewsSentimentSummary from '../components/NewsSentimentSummary';
 import LensBoard from '../components/LensBoard';
 import FiiDiiPanel from '../components/FiiDiiPanel';
+import FeatureReel from '../components/FeatureReel';
+import MacroBoard from '../components/MacroBoard';
+import { DASH_SECTIONS } from '../lib/dashSections';
 
 function SparkHistory({ symbol }: { symbol: string }) {
   // Sparklines already ride along in analysis.json. A per-row /api/chart
@@ -38,6 +41,54 @@ function SnapshotMeta() {
   );
 }
 
+function MoverTable({
+  rows,
+  instruments,
+  onOpen,
+}: {
+  rows: Snapshot[];
+  instruments: Instrument[];
+  onOpen: (symbol: string) => void;
+}) {
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Symbol</th>
+            <th>Last</th>
+            <th>Day</th>
+            <th>Chg %</th>
+            <th>Volume</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((s) => {
+            const inst = instruments.find((i) => i.symbol === s.symbol);
+            return (
+              <tr key={s.symbol} onClick={() => onOpen(s.symbol)}>
+                <td>
+                  <div className="sym-cell">{s.symbol}</div>
+                  <div className="name-cell">{inst?.name ?? ''}</div>
+                </td>
+                <td className="mono">{fmt(s.price)}</td>
+                <td><SparkHistory symbol={s.symbol} /></td>
+                <td className="mono"><span className={s.changePct >= 0 ? 'up' : 'down'}>{fmtPct(s.changePct)}</span></td>
+                <td className="mono muted">{s.dayVolume > 0 ? fmtCompact(s.dayVolume) : <span className="dim">—</span>}</td>
+              </tr>
+            );
+          })}
+          {rows.length === 0 && (
+            <tr>
+              <td colSpan={5} className="dim">Waiting for the tape.</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const snapshots = useLive((s) => s.snapshots);
@@ -53,34 +104,40 @@ export default function Dashboard() {
 
   const live = useMemo(() => {
     const list = Object.values(snapshots).filter(Boolean) as Snapshot[];
-    const bySym = new Map(list.map((s) => [s.symbol, s]));
-    const gainers = [...list].sort((a, b) => b.changePct - a.changePct).slice(0, 8);
-    const losers = [...list].sort((a, b) => a.changePct - b.changePct).slice(0, 8);
-    return { list, bySym, gainers, losers };
+    const gainers = [...list].sort((a, b) => b.changePct - a.changePct).slice(0, 6);
+    const losers = [...list].sort((a, b) => a.changePct - b.changePct).slice(0, 6);
+    return { list, gainers, losers };
   }, [snapshots]);
 
   const total = live.list.length || overview?.market.total || 0;
   const adv = overview?.market.advancers ?? live.list.filter((s) => s.changePct > 0).length;
   const dec = overview?.market.decliners ?? live.list.filter((s) => s.changePct < 0).length;
   const breadth = total ? (adv / total) * 100 : 0;
-
   const index = overview?.index;
 
-  const sectors = (overview?.sectorPerformance ?? []).map((s) => {
-    const pct = s.changePct;
-    return { ...s, pct };
-  });
-
+  const sectors = (overview?.sectorPerformance ?? []).map((s) => ({ ...s, pct: s.changePct }));
   const sectorMin = sectors.length ? Math.min(...sectors.map((s) => s.pct)) : 0;
   const sectorMax = sectors.length ? Math.max(...sectors.map((s) => s.pct)) : 0;
 
+  const jump = (id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
   return (
-    <div>
+    <div className="dash">
       <h1 style={{ marginBottom: 4 }}>Market Dashboard</h1>
-      <p className="muted" style={{ marginBottom: 20, fontSize: 13 }}>
-        Search 5,000+ NSE &amp; BSE listed stocks. Live tape tracks the most liquid names; open any ticker from search.
+      <p className="muted" style={{ marginBottom: 16, fontSize: 13 }}>
+        Liquid NSE tape, news, names to watch, flows, and how commodities feed into India.
       </p>
       <SnapshotMeta />
+
+      <nav className="dash-jump" aria-label="Dashboard sections">
+        {DASH_SECTIONS.map((s) => (
+          <button key={s.id} type="button" onClick={() => jump(s.id)}>{s.label}</button>
+        ))}
+      </nav>
+
+      <FeatureReel />
 
       <div className="stat-grid">
         <div className="stat-card reveal">
@@ -125,53 +182,36 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="grid-2-1" style={{ marginBottom: 16 }}>
-        <div className="panel reveal reveal-1" style={{ minHeight: 380 }}>
-          <div className="panel-title">
-            <h3>Market Movers</h3>
-            <span className="hint">click to drill in</span>
+      <section id="movers" className="dash-section">
+        <header className="dash-head">
+          <h2>Top movers</h2>
+          <p>Six strongest and six weakest names on the liquid tape. Click a row to open the stock.</p>
+        </header>
+        <div className="grid-2">
+          <div className="panel">
+            <div className="panel-title">
+              <h3>Gainers</h3>
+              <span className="hint">today</span>
+            </div>
+            <MoverTable rows={live.gainers} instruments={instruments} onOpen={(s) => navigate(`/stock/${s}`)} />
           </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Symbol</th>
-                  <th>Last</th>
-                  <th>Day Trend</th>
-                  <th>Chg %</th>
-                  <th>Volume</th>
-                </tr>
-              </thead>
-              <tbody>
-                {live.gainers.map((s) => {
-                  const inst = instruments.find((i) => i.symbol === s.symbol);
-                  return (
-                    <tr key={s.symbol} onClick={() => navigate(`/stock/${s.symbol}`)}>
-                      <td>
-                        <div className="sym-cell">{s.symbol}</div>
-                        <div className="name-cell">{inst?.name ?? ''}</div>
-                      </td>
-                      <td className="mono">{fmt(s.price)}</td>
-                      <td><SparkHistory symbol={s.symbol} /></td>
-                      <td className="mono"><span className={s.changePct >= 0 ? 'up' : 'down'}>{fmtPct(s.changePct)}</span></td>
-                      <td className="mono muted">{s.dayVolume > 0 ? fmtCompact(s.dayVolume) : <span className="dim">—</span>}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="panel">
+            <div className="panel-title">
+              <h3>Losers</h3>
+              <span className="hint">today</span>
+            </div>
+            <MoverTable rows={live.losers} instruments={instruments} onOpen={(s) => navigate(`/stock/${s}`)} />
           </div>
         </div>
-
-        <div className="panel reveal reveal-2" style={{ minHeight: 380 }}>
+        <div className="panel" style={{ marginTop: 14 }}>
           <div className="panel-title">
-            <h3>Sector Performance</h3>
-            <span className="hint">by avg change</span>
+            <h3>Sectors</h3>
+            <span className="hint">average change</span>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+          <div className="sector-grid">
             {sectors.map((s) => (
               <div key={s.sector}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3, gap: 8 }}>
                   <span className="muted" style={{ fontSize: 12 }}>{s.sector}</span>
                   <span className={cls('mono', s.pct >= 0 ? 'up' : 'down')} style={{ fontSize: 12, fontWeight: 600 }}>{fmtPct(s.pct)}</span>
                 </div>
@@ -190,59 +230,48 @@ export default function Dashboard() {
             {sectors.length === 0 && <div className="empty">No sector data.</div>}
           </div>
         </div>
-      </div>
+      </section>
 
-      <div className="grid-2" style={{ marginBottom: 16 }}>
-        <div className="panel reveal reveal-1">
-          <div className="panel-title">
-            <h3>Top Losers</h3>
-            <span className="hint">today</span>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Symbol</th>
-                  <th>Last</th>
-                  <th>Chg %</th>
-                </tr>
-              </thead>
-              <tbody>
-                {live.losers.map((s) => (
-                  <tr key={s.symbol} onClick={() => navigate(`/stock/${s.symbol}`)}>
-                    <td className="sym-cell">{s.symbol}</td>
-                    <td className="mono">{fmt(s.price)}</td>
-                    <td className="mono down">{fmtPct(s.changePct)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div className="panel reveal reveal-2">
-          <div className="panel-title">
-            <h3>Live News</h3>
-            <span className="hint">Google News · India</span>
-          </div>
+      <section id="news" className="dash-section">
+        <header className="dash-head">
+          <h2>News</h2>
+          <p>India headlines and the tone of the feed.</p>
+        </header>
+        <div className="panel">
           <NewsSentimentSummary />
-          <div style={{ maxHeight: 360, overflowY: 'auto' }}>
-            <NewsFeed items={news} limit={12} />
+          <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+            <NewsFeed items={news} limit={8} />
           </div>
         </div>
-      </div>
+      </section>
 
-      <LensBoard />
+      <section id="watch" className="dash-section">
+        <header className="dash-head">
+          <h2>Stocks to watch out</h2>
+          <p>Technical, fundamental, and the blend. Click a name — the breakdown opens in a window, not under the list.</p>
+        </header>
+        <LensBoard />
+      </section>
 
-      <FiiDiiPanel />
+      <section id="flows" className="dash-section">
+        <header className="dash-head">
+          <h2>FII, DII activity</h2>
+          <p>Net cash-market flow. Sector buy and sell splits are not in this tape.</p>
+        </header>
+        <FiiDiiPanel />
+      </section>
 
-      <div className="panel reveal reveal-1">
-        <div className="panel-title">
-          <h3>Algorithm Signals</h3>
-          <span className="hint">streaming · market.signals</span>
+      <section id="signals" className="dash-section">
+        <header className="dash-head">
+          <h2>Algorithmic signals</h2>
+          <p>Latest prints only. Open a name for the full book.</p>
+        </header>
+        <div className="panel dash-signals">
+          <SignalFeed signals={signals} limit={6} />
         </div>
-        <SignalFeed signals={signals} limit={25} />
-      </div>
+      </section>
+
+      <MacroBoard niftyPct={index?.changePct ?? null} />
     </div>
   );
 }
