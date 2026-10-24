@@ -35,6 +35,51 @@ function abortAfter(ms: number): AbortSignal {
   return ctrl.signal;
 }
 
+const publisherCache = new Map<string, Promise<string>>();
+
+/** Google News RSS links are wrappers. Exchange the article id for the
+ *  publisher URL (Moneycontrol, Reuters, …) so a click opens that article.
+ *  If Google will not decode it, the wrapper URL is kept — never an empty href. */
+function publisherUrl(googleUrl: string): Promise<string> {
+  const cached = publisherCache.get(googleUrl);
+  if (cached) return cached;
+  const job = (async () => {
+    const id = googleUrl.match(/news\.google\.com\/(?:rss\/)?articles\/([^/?#]+)/)?.[1];
+    if (!id) return googleUrl;
+    try {
+      const page = await fetch(`https://news.google.com/rss/articles/${id}?hl=en-IN&gl=IN&ceid=IN:en`, {
+        headers: { 'User-Agent': UA },
+        signal: abortAfter(8_000),
+      });
+      const html = page.ok ? await page.text() : '';
+      const sg = html.match(/data-n-a-sg="([^"]+)"/)?.[1];
+      const ts = html.match(/data-n-a-ts="([^"]+)"/)?.[1];
+      if (!sg || !ts) return googleUrl;
+      const inner = JSON.stringify([
+        'garturlreq',
+        [['X', 'X', ['X', 'X'], null, null, 1, 1, 'IN:en', null, 1, null, null, null, null, null, 0, 1], 'X', 'X', 1, [1, 1, 1], 1, 1, null, 0, 0, null, 0],
+        id,
+        Number(ts),
+        sg,
+      ]);
+      const body = 'f.req=' + encodeURIComponent(JSON.stringify([[['Fbv4je', inner, null, 'generic']]]));
+      const res = await fetch('https://news.google.com/_/DotsSplashUi/data/batchexecute?rpcids=Fbv4je', {
+        method: 'POST',
+        headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+        body,
+        signal: abortAfter(8_000),
+      });
+      const text = res.ok ? await res.text() : '';
+      const found = text.match(/https:\/\/(?!news\.google\.com\/)[^"\\]+/);
+      return found?.[0] ?? googleUrl;
+    } catch {
+      return googleUrl;
+    }
+  })();
+  publisherCache.set(googleUrl, job);
+  return job;
+}
+
 function stampOf(value: unknown): number {
   if (!value || typeof value !== 'object') return 0;
   const o = value as { generatedAt?: string; updatedAt?: string };
@@ -97,13 +142,14 @@ async function fetchRss(query: string): Promise<RssArticle[]> {
     const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: abortAfter(15_000) });
     if (!res.ok) return out;
     const xml = await res.text();
-    for (const m of xml.matchAll(/<item>([\s\S]{0,4000}?)<\/item>/g)) {
-      const body = m[1];
-      const title = decode(body.match(/<title>([\s\S]{0,500}?)<\/title>/)?.[1] ?? '');
-      const link = decode(body.match(/<link>([\s\S]{0,500}?)<\/link>/)?.[1] ?? '');
-      const pubDate = decode(body.match(/<pubDate>([^<>]{0,60})<\/pubDate>/)?.[1] ?? '');
-      const source = decode(body.match(/<source[^>]*>([^<>]{0,80})<\/source>/)?.[1] ?? 'Google News');
-      if (title) out.push({ title, link, pubDate, source });
+    // Google News article links are often 600–800 characters. A short cap
+    // drops </link> and the headline is stored with an empty url.
+    for (const body of xml.match(/<item>[\s\S]*?<\/item>/g) ?? []) {
+      const title = decode(body.match(/<title>([\s\S]*?)<\/title>/)?.[1] ?? '');
+      const link = decode(body.match(/<link>([\s\S]*?)<\/link>/)?.[1] ?? '').trim();
+      const pubDate = decode(body.match(/<pubDate>([^<]*?)<\/pubDate>/)?.[1] ?? '');
+      const source = decode(body.match(/<source[^>]*>([\s\S]*?)<\/source>/)?.[1] ?? 'Google News');
+      if (title && /^https?:\/\//i.test(link)) out.push({ title, link, pubDate, source });
       if (out.length >= 12) break;
     }
   } catch {
@@ -170,7 +216,7 @@ async function main(): Promise<void> {
     const sector = symSector.get(sym.toUpperCase());
     if (!sector) continue;
     for (const a of list ?? []) {
-      if (!a?.title) continue;
+      if (!a?.title || !/^https?:\/\//i.test(a.url ?? '')) continue;
       if (push(sector, {
         title: a.title, source: a.source ?? 'Google News', url: a.url ?? '',
         publishedAt: a.publishedAt ?? new Date().toISOString(),
@@ -205,11 +251,26 @@ async function main(): Promise<void> {
   }
 
   const out: Record<string, SectorItem[]> = {};
+  const toResolve: SectorItem[] = [];
   for (const [sector, list] of buckets) {
     out[sector] = list
       .sort((a, b) => (a.publishedAt < b.publishedAt ? 1 : -1))
       .slice(0, PER_SECTOR);
+    for (const item of out[sector]) {
+      if (item.url.includes('news.google.com/')) toResolve.push(item);
+    }
   }
+  let cursor = 0;
+  const resolveOne = async () => {
+    while (cursor < toResolve.length) {
+      const item = toResolve[cursor];
+      cursor += 1;
+      item.url = await publisherUrl(item.url);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(5, toResolve.length) }, resolveOne));
+  const opened = toResolve.filter((item) => !item.url.includes('news.google.com/')).length;
+  console.log(`sector-news: resolved ${opened}/${toResolve.length} headlines to publisher URLs`);
   mkdirSync(PUB, { recursive: true });
   writeFileSync(OUT, JSON.stringify({ generatedAt: new Date().toISOString(), sectorCount: Object.keys(out).length, sectors: out }));
   console.log(`sector-news: ${Object.keys(out).length} sectors · ${memberCount} member + ${wireCount} wire items -> ${OUT}`);

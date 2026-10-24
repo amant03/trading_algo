@@ -184,9 +184,15 @@ export default function SectorNews({ symbol }: { symbol: string }) {
         <div className="empty">No sector headlines in the last {span.label.toLowerCase()} for {sectors.join(' + ')}.</div>
       ) : (
         <div className="stock-news-list" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '4px 20px' }}>
-          {shown.slice(0, 12).map((a, i) => (
+          {shown.slice(0, 12).map((a, i) => {
+            const href = /^https?:\/\//i.test(a.url) ? a.url : '';
+            return (
             <div key={i} className="news-art">
-              <a href={a.url} target="_blank" rel="noopener noreferrer">{a.title}</a>
+              {href ? (
+                <a href={href} target="_blank" rel="noopener noreferrer">{a.title}</a>
+              ) : (
+                <div className="news-headline">{a.title}</div>
+              )}
               <div className="news-meta">
                 <span>{a.source}</span>
                 <SentimentBadge sentiment={classifySentiment(a.title)} />
@@ -198,7 +204,8 @@ export default function SectorNews({ symbol }: { symbol: string }) {
                 )}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
