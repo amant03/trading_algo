@@ -31,7 +31,7 @@ export async function GET(request: Request): Promise<Response> {
     });
   }
 
-  const pat = process.env.REPO_PAT;
+  const pat = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.REPO_PAT;
   if (!pat) {
     return new Response(JSON.stringify({ error: 'import service not configured (REPO_PAT missing)' }), {
       status: 500,
