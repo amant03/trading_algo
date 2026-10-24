@@ -36,6 +36,7 @@
 import { writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { sma, rsi, macd, bollinger, supertrend } from '@trading/shared';
+import { shortTermAllowsLong } from './paper-daily.ts';
 import { INSTRUMENTS as SEED } from '../../services/shared/src/instruments-data.js';
 
 // ---- market configs ---------------------------------------------------------
@@ -76,7 +77,7 @@ const MARKETS: MarketCfg[] = [
     capital: Number(process.env.PAPER_WEEK_IN_CAPITAL ?? 1_000_000),
     currency: '₹',
     locale: 'en-IN',
-    session: [9 * 60 + 15, 15 * 60 + 30],
+    session: [9 * 60 + 15, 15 * 60 + 15], // dealing stops at 15:15; the exchange print runs to 15:30
     minPrice: 10,
   },
   {
@@ -403,7 +404,7 @@ function replayDay(
   const today = new Map<string, Bar[]>();
   for (const [sym, bars] of series) {
     const idx = bars.findIndex((b) => dayOf(b.ts, m.tz) === date);
-    const todays = bars.filter((b) => dayOf(b.ts, m.tz) === date);
+    const todays = bars.filter((b) => dayOf(b.ts, m.tz) === date && minutesOf(b.ts, m.tz) < m.session[1]);
     if (!todays.length) continue;
     const before = idx > 0 ? bars.slice(Math.max(0, idx - WARMUP_BARS), idx) : [];
     warm.set(sym, before);
@@ -478,6 +479,7 @@ function replayDay(
           const full = withWarm(sym, i);
           const sig = signalFor(strat.id, full);
           if (sig?.dir !== 'BUY') continue;
+          if (!shortTermAllowsLong(bars.slice(0, i + 1)).ok) continue;
           // Same gates the daily brain learned from the loss book:
           // no falling knives, no chase above RSI 68, no thin-volume poke.
           const closes = full.map((b) => b.c);

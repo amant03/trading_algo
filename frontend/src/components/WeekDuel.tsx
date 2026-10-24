@@ -184,7 +184,7 @@ export default function WeekDuel() {
             <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.55 }}>
               <b>Historical replay</b>, not live trading: each of the last 5 NSE sessions is replayed with a fresh{' '}
               <b>{inr(store.config.inCapital)}</b> split across the methods. Each buy is sold the same day.
-              <b> 1% hard stop-loss, squared off at the close.</b> For today&apos;s live positions, see the Live tab.
+              <b> 1% hard stop-loss, flat by 15:15.</b> For today&apos;s live positions, see the Live tab.
             </div>
           </div>
           <WeekSpark cards={store.in} />

@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { fetchWithTimeout } from '../api';
 import WeekDuel from '../components/WeekDuel';
 import LivePaper from '../components/LivePaper';
@@ -289,9 +290,9 @@ function DailyTradesTable({ trades }: { trades: TradeRow[] }) {
         };
       case 'eod':
         return {
-          why: `Held to the closing bell per intraday discipline (never overnight) and squared at the close.`,
+          why: `The trade never reached the +1.5% target or the 1% stop, so it stayed open until the 15:15 square-off. The loss is the round-trip cost plus the move into that flat.`,
           ...base,
-          next: 'Small EOD losses are the cost of the no-overnight rule. If a method bleeds this way repeatedly, its bucket shrinks in Bot Brain.',
+          next: 'New longs need the last 30 minutes to still have room — a close pinned to that high, or a half-hour that already ran 0.55%, is skipped. Bot Brain scores the after-cost return, and a bench stays on until expectancy has healed.',
         };
       default:
         return {
@@ -574,7 +575,7 @@ export default function Paper() {
     <div>
       <div className="stock-header">
         <div className="stock-title">
-          <div className="sym">PAPER</div>
+          <h1 className="sym">PAPER</h1>
           <div className="nm">
             {r?.account ?? 'Paper Lab'} · virtual ₹1,00,000 · 5 methods
           </div>
@@ -685,7 +686,7 @@ export default function Paper() {
                           </a>
                         ) : STRAT_META_LABELS.get(o.strategy) ?? o.strategy}
                       </span>
-                      <span><a className="mono" href={`#/stock/${o.symbol}`}>{o.symbol}</a></span>
+                      <span><Link className="mono" to={`/stock/${o.symbol}`}>{o.symbol}</Link></span>
                       <span className="mono">{o.qty}</span>
                       <span className="mono">{inr(o.entryPrice, 2)}</span>
                       <span className="mono">{inr(o.lastPrice, 2)}</span>
@@ -741,7 +742,7 @@ export default function Paper() {
         <div className="panel reveal" style={{ marginBottom: 16 }}>
           <div className="panel-title">
             <h3>Daily Paper trade</h3>
-            <span className="hint">fresh ₹10,00,000 every market day · intraday, squared off at the close</span>
+            <span className="hint">fresh ₹10,00,000 every market day · intraday, flat by 15:15</span>
           </div>
           <div className="empty">Daily paper trades refresh during market hours — first session runs at 09:16 IST.</div>
         </div>
@@ -854,7 +855,7 @@ export default function Paper() {
                   {r.openPositions.map((p) => (
                     <div className="tr" key={p.strategy + p.symbol}>
                       <span className="muted">{p.label}</span>
-                      <span><a className="mono" href={`#/stock/${p.symbol}`}>{p.symbol}</a></span>
+                      <span><Link className="mono" to={`/stock/${p.symbol}`}>{p.symbol}</Link></span>
                       <span className="mono">{p.qty}</span>
                       <span className="mono">{inr(p.entryPrice, 2)}</span>
                       <span className="mono">{inr(p.lastPrice, 2)}</span>

@@ -21,18 +21,27 @@
 //   1. BUY on a bullish signal WITH trend confluence (never into a downtrend)
 //   2. HOLD while it works — ratchet locks gains once +1% up
 //   3. SELL the same day on: 1% hard stop / +1.5% take-profit / 1% ratchet /
-//      fresh bearish NEWS / the 15:15 square-off. A 5-minute opposite
+//      fresh bearish NEWS / the 15:15 square-off. Dealing stops at 15:15
+//      even though the exchange print runs to 15:30. A 5-minute opposite
 //      signal is NOT an exit — that churn was the loss (signal-exits
 //      −₹1,816 vs end-of-day exits +₹1,349 over the recorded book).
+//   4. BUY only when the last 30 minutes still have room: the close is not
+//      pinned to that high, and the half-hour has not already run +0.55%.
 //
 // Self-improvement (paper/learning.json, 10-session rolling window):
 //   * each strategy gets a WEIGHT from loss-averse scoring of its recent
 //     round trips; capital splits by weight, losers get starved then PAUSED
+//   * the return the brain scores is the after-cost round trip (entry and
+//     exit slippage), kept to 0.01%. A scratch must not round down to 0%
+//     and disappear from expectancy
+//   * the window counts sessions that actually traded. Empty days were
+//     evicting the losses, so a real losing streak looked like "warming up"
+//     and kept a full bucket
 //   * 6-bar COOLDOWN after any stop-loss (no revenge trading)
 //   * per-symbol AVOID list: two stop-outs in a day = done with it today
 //   * a benched method comes back only when its expectancy has healed.
-//     The clock alone does not parole it — that is how MA Cross and MACD
-//     were reinstated and lost again.
+//     A thinner window is not parole, and the clock alone does not parole
+//     it — that is how MA Cross and MACD were reinstated and lost again.
 //   * every pause/resume/weight-shift is logged as a human-readable LESSON
 //
 // Reruns are idempotent: each run replays today's closed bars from the day's open.
@@ -40,6 +49,7 @@
 // Writes: frontend/public/paper/daily.json, frontend/public/paper/learning.json
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
+import { pathToFileURL } from 'url';
 import { join } from 'path';
 import { sma, rsi, macd, bollinger, supertrend, stochastic } from '@trading/shared';
 import { INSTRUMENTS as SEED } from '../../services/shared/src/instruments-data.js';
@@ -57,7 +67,11 @@ const REGIME_MIN_PCT = -0.3; // market-regime fuse: NIFTY itself down worse than
 const RSI_CEIL = 68; // never chase overbought: RSI above this blocks entries (FOMO filter)
 const VOL_MULT = 1.0; // entry bar volume must beat its 10-bar average (real participation, not noise)
 const CONFIRM_BARS = 2; // reserved: signal freshness window (signals evaluate live per bar, so recency is structural)
-const ENTRY_CUTOFF_MIN = 14 * 60 + 30; // 14:30 IST — a later buy is only a scratch into the square-off
+const SESSION_END_MIN = 15 * 60 + 15; // 15:15 IST — dealing stops here; the exchange print runs on to 15:30
+const ENTRY_CUTOFF_MIN = 14 * 60 + 15; // 14:15 IST — a later buy has under an hour before the 15:15 flat
+const TAPE_BARS = 6; // last 30 minutes
+const TAPE_LOC_MAX = 0.9; // close in the top 10% of that range is a spent swing
+const TAPE_RET_MAX = 0.55; // last 30 min already up this much — the move has paid
 const MA_SEP_PCT = 0.0008; // golden cross must separate by 0.08% of price; paise-wide crosses were noise
 const DONCHIAN_BUFFER = 0.0015; // close must clear the 20-bar channel by 0.15%, not one tick
 const BB_BUFFER = 0.0005; // close must clear the Bollinger band, not poke it by a few paise
@@ -347,7 +361,7 @@ interface LearnRuntime {
   cooldown: Map<string, number>; // strategy -> bars left to sit out
   avoid: Map<string, number>; // "strat|sym" -> stop-outs today
   avoidEvents: string[];
-  skips: { trend: number; news: number; cooldown: number; avoid: number; paused: number; drift: number; breaker: number; chase: number; thin: number; unconfirmed: number; regime: number; late: number; stacked: number };
+  skips: { trend: number; news: number; cooldown: number; avoid: number; paused: number; drift: number; breaker: number; chase: number; thin: number; unconfirmed: number; regime: number; late: number; stacked: number; extended: number };
   newsDay: { actions: number; net: number; blocked: number };
   halted: boolean; // daily circuit breaker tripped — no new entries
   exitMix: Record<string, number>;
@@ -394,8 +408,21 @@ function loadLearn(): LearnState {
 
 interface WindowStats { n: number; win: number; net: number; mean: number; sd: number }
 
-function windowStats(learn: LearnState, strat: string): WindowStats {
-  const days = learn.history.slice(-learn.windowDays);
+/** After-cost return in percent. The sell-side slippage is part of the number. */
+export function roundTripRetPct(qty: number, entryPrice: number, exitPrice: number): number {
+  const cost = qty * entryPrice;
+  if (!(cost > 0) || !isFinite(exitPrice)) return 0;
+  const pnl = qty * exitPrice * (1 - SLIPPAGE) - cost;
+  return (pnl / cost) * 100;
+}
+
+export function windowStats(learn: LearnState, strat: string): WindowStats {
+  // Empty sessions (no round trip from any method) are not memory. Counting
+  // them pushed real losing days out of the window, and the method looked
+  // like it had just started.
+  const days = learn.history
+    .filter((d) => Object.values(d.per ?? {}).some((p) => p.n > 0))
+    .slice(-learn.windowDays);
   let n = 0;
   let win = 0;
   let net = 0;
@@ -440,72 +467,110 @@ function scoreStrategy(st: WindowStats): { weight: number; paused: boolean; reas
   };
 }
 
+export interface BrainPrev {
+  weight: number;
+  status: 'active' | 'paused';
+  reason: string;
+  streak: number;
+  pausedUntil: string | null;
+}
+
+export interface BrainVerdict {
+  weight: number;
+  paused: boolean;
+  reason: string;
+  streak: number;
+  pausedUntil: string | null;
+  lesson: string | null;
+}
+
+function plusDays(d: string, n: number): string {
+  const t = Date.parse(`${d}T12:00:00Z`) + n * 86400_000;
+  return new Date(t).toISOString().slice(0, 10);
+}
+
+/**
+ * What this method should do tomorrow, given its window and its current bench.
+ * A losing streak the window can no longer see still benches the method.
+ * An existing bench stays until the numbers have healed.
+ */
+export function judgeMethod(label: string, stats: WindowStats, prev: BrainPrev, date: string): BrainVerdict {
+  const forgotten = prev.streak <= -3 && stats.n < Math.min(6, -prev.streak);
+  let cur = (prev.streak <= -3 && stats.n >= 6) || forgotten
+    ? {
+        weight: 0,
+        paused: true,
+        reason: `benched: ${-prev.streak} straight losses over ${stats.n} trips in the window — refusing repeat losses`,
+      }
+    : scoreStrategy(stats);
+  let pausedUntil = prev.pausedUntil;
+  let streak = prev.streak;
+  let lesson: string | null = null;
+  const wasPaused = prev.status === 'paused';
+  const healed = stats.n >= 3 && stats.mean >= 0.05;
+  // No rows left means the method was sitting out, not that it recovered.
+  // A window that still holds red trips is not parole.
+  const noEvidence = stats.n === 0;
+  const notALoser = stats.n >= 3 && stats.mean >= 0;
+  const served = pausedUntil != null && date >= pausedUntil && (noEvidence || notALoser);
+
+  if (wasPaused) {
+    if (healed || served) {
+      const why = healed
+        ? `window healed to +${stats.mean.toFixed(2)}%/trade`
+        : `bench time served and expectancy is ${stats.mean >= 0 ? '+' : ''}${stats.mean.toFixed(2)}%/trade`;
+      cur = { weight: 0.5, paused: false, reason: `paroled: ${why} — half bucket until it proves itself` };
+      streak = 0;
+      pausedUntil = null;
+      lesson = `REINSTATED ${label} — ${cur.reason}.`;
+    } else if (!cur.paused) {
+      const extend = pausedUntil != null && date >= pausedUntil;
+      pausedUntil = extend || pausedUntil == null ? plusDays(date, 5) : pausedUntil;
+      cur = {
+        weight: 0,
+        paused: true,
+        reason: `benched: pause holds, expectancy ${stats.mean >= 0 ? '+' : ''}${stats.mean.toFixed(2)}%/trade over ${stats.n} trips — parole ${pausedUntil}`,
+      };
+      if (extend) {
+        lesson = `BENCH EXTENDED ${label} — time was served but expectancy is still ${stats.mean >= 0 ? '+' : ''}${stats.mean.toFixed(2)}%/trade over ${stats.n} trips. Repeating that loss is refused. Next look ${pausedUntil}.`;
+      }
+    } else if (pausedUntil != null && date >= pausedUntil) {
+      pausedUntil = plusDays(date, 5);
+      lesson = `BENCH EXTENDED ${label} — time was served but expectancy is still ${stats.mean >= 0 ? '+' : ''}${stats.mean.toFixed(2)}%/trade over ${stats.n} trips. Repeating that loss is refused. Next look ${pausedUntil}.`;
+    }
+  } else if (cur.paused) {
+    pausedUntil = plusDays(date, 5);
+    lesson = `BENCHED ${label} — ${cur.reason}. Parole on ${pausedUntil}; capital goes to winners meanwhile.`;
+  }
+
+  return { weight: cur.weight, paused: cur.paused, reason: cur.reason, streak, pausedUntil, lesson };
+}
+
 /** Recompute weights/pauses from the rolling window; returns human lessons. */
 function refreshBrain(learn: LearnState, date: string): string[] {
   const lessons: string[] = [];
-  const plusDays = (d: string, n: number): string => {
-    const t = Date.parse(`${d}T12:00:00Z`) + n * 86400_000;
-    return new Date(t).toISOString().slice(0, 10);
-  };
-  const totalW = { v: 0 };
-  const next: Record<string, { weight: number; paused: boolean; reason: string }> = {};
-  for (const s of STRATEGIES) {
-    const streak = learn.strategies[s.id]?.streak ?? 0;
-    const w = windowStats(learn, s.id);
-    // Bench on 3 straight losses ONLY with a real sample (no punishing a
-    // method for its first-ever trades), else score by expectancy.
-    if (streak <= -3 && w.n >= 6) {
-      next[s.id] = {
-        weight: 0,
-        paused: true,
-        reason: `benched: ${-streak} straight losses over ${w.n} trips — refusing repeat losses`,
-      };
-    } else {
-      next[s.id] = scoreStrategy(w);
-    }
-    totalW.v += next[s.id].weight;
-  }
-  for (const s of STRATEGIES) {
+  const verdicts = STRATEGIES.map((s) => {
     const prev = learn.strategies[s.id];
-    let cur = next[s.id];
-    const wasPaused = prev.status === 'paused';
-    if (cur.paused && !wasPaused) {
-      // Fresh bench carries a fixed expiry — parole is guaranteed.
-      learn.strategies[s.id].pausedUntil = plusDays(date, 5);
-      lessons.push(`BENCHED ${s.label} — ${cur.reason}. Parole on ${learn.strategies[s.id].pausedUntil}; capital goes to winners meanwhile.`);
-    } else if (wasPaused && cur.paused) {
-      // Window-heal parole…
-      const w = windowStats(learn, s.id);
-      if (w.n >= 3 && w.mean >= 0.05) {
-        cur = { ...cur, weight: 0.5, paused: false, reason: `paroled: window healed to ${w.mean >= 0 ? '+' : ''}${w.mean.toFixed(2)}%/trade — half bucket until it proves itself` };
-        learn.strategies[s.id].streak = 0;
-        learn.strategies[s.id].pausedUntil = null;
-      } else if (prev.pausedUntil != null && date >= prev.pausedUntil) {
-        // Clock parole only if the window is no longer a loser. Time-served
-        // reinstatement of a still-negative method is how MA Cross and MACD
-        // came back and lost again.
-        if (w.n >= 3 && w.mean >= 0) {
-          cur = { ...cur, weight: 0.5, paused: false, reason: `paroled: bench time served and expectancy healed to +${w.mean.toFixed(2)}%/trade — half bucket until it proves itself` };
-          learn.strategies[s.id].streak = 0;
-          learn.strategies[s.id].pausedUntil = null;
-        } else {
-          learn.strategies[s.id].pausedUntil = plusDays(date, 5);
-          lessons.push(
-            `BENCH EXTENDED ${s.label} — time was served but expectancy is still ${w.mean >= 0 ? '+' : ''}${w.mean.toFixed(2)}%/trade over ${w.n} trips. Repeating that loss is refused. Next look ${learn.strategies[s.id].pausedUntil}.`,
-          );
-        }
-      }
+    const verdict = judgeMethod(s.label, windowStats(learn, s.id), prev, date);
+    return { s, prev, verdict };
+  });
+  for (const { s, prev, verdict } of verdicts) {
+    if (verdict.lesson) lessons.push(verdict.lesson);
+    else if (!verdict.paused && prev.status !== 'paused' && Math.abs(verdict.weight - prev.weight) >= 0.4) {
+      const dir = verdict.weight > prev.weight ? 'raised' : 'cut';
+      lessons.push(`${s.label} bucket ${dir} ${prev.weight.toFixed(2)}× → ${verdict.weight.toFixed(2)}× — ${verdict.reason}.`);
     }
-    if (!cur.paused && wasPaused && learn.strategies[s.id].pausedUntil == null && !lessons.some((l) => l.includes(s.label))) {
-      lessons.push(`REINSTATED ${s.label} — rolling window recovered (${cur.reason}). Bucket restored gradually.`);
-    } else if (!cur.paused && !wasPaused && Math.abs(cur.weight - prev.weight) >= 0.4) {
-      const dir = cur.weight > prev.weight ? 'raised' : 'cut';
-      lessons.push(`${s.label} bucket ${dir} ${prev.weight.toFixed(2)}× → ${cur.weight.toFixed(2)}× — ${cur.reason}.`);
-    }
-    learn.strategies[s.id] = { weight: cur.weight, status: cur.paused ? 'paused' : 'active', reason: cur.reason, streak: prev.streak, pausedUntil: learn.strategies[s.id].pausedUntil ?? null };
+    learn.strategies[s.id] = {
+      weight: verdict.weight,
+      status: verdict.paused ? 'paused' : 'active',
+      reason: verdict.reason,
+      streak: verdict.streak,
+      pausedUntil: verdict.pausedUntil,
+    };
   }
+  const totalW = verdicts.reduce((a, v) => a + v.verdict.weight, 0);
   learn.allocation = Object.fromEntries(
-    STRATEGIES.map((s) => [s.id, totalW.v > 0 ? Math.round((next[s.id].weight / totalW.v) * 1000) / 1000 : 0]),
+    verdicts.map(({ s, verdict }) => [s.id, totalW > 0 ? Math.round((verdict.weight / totalW) * 1000) / 1000 : 0]),
   );
   return lessons;
 }
@@ -520,7 +585,7 @@ function makeRuntime(learn: LearnState, news: Map<string, NewsItem[]>, nifty?: {
     cooldown: new Map(),
     avoid: new Map(),
     avoidEvents: [],
-    skips: { trend: 0, news: 0, cooldown: 0, avoid: 0, paused: 0, drift: 0, breaker: 0, chase: 0, thin: 0, unconfirmed: 0, regime: 0, late: 0, stacked: 0 },
+    skips: { trend: 0, news: 0, cooldown: 0, avoid: 0, paused: 0, drift: 0, breaker: 0, chase: 0, thin: 0, unconfirmed: 0, regime: 0, late: 0, stacked: 0, extended: 0 },
     newsDay: { actions: 0, net: 0, blocked: 0 },
     halted: false,
     exitMix: {},
@@ -585,10 +650,10 @@ function updateLearning(learn: LearnState, date: string, dayTrades: Trade[], rt:
       `News fuse fired ${rt.newsDay.actions}× (net ${rt.newsDay.net >= 0 ? '+' : ''}₹${Math.round(rt.newsDay.net)}) and blocked ${rt.newsDay.blocked} entries on bearish headlines.`,
     );
   }
-  const skipTotal = rt.skips.trend + rt.skips.cooldown + rt.skips.avoid + rt.skips.paused + rt.skips.drift + rt.skips.breaker + rt.skips.chase + rt.skips.thin + rt.skips.unconfirmed + rt.skips.regime + rt.skips.late + rt.skips.stacked;
+  const skipTotal = rt.skips.trend + rt.skips.cooldown + rt.skips.avoid + rt.skips.paused + rt.skips.drift + rt.skips.breaker + rt.skips.chase + rt.skips.thin + rt.skips.unconfirmed + rt.skips.regime + rt.skips.late + rt.skips.stacked + rt.skips.extended;
   if (skipTotal > 0) {
     lessons.push(
-      `Selectiveness — skipped ${skipTotal} entries (regime ${rt.skips.regime}, trend ${rt.skips.trend}, drift ${rt.skips.drift}, chase ${rt.skips.chase}, thin-vol ${rt.skips.thin}, late ${rt.skips.late}, stacked ${rt.skips.stacked}, unconfirmed ${rt.skips.unconfirmed}, cooldown ${rt.skips.cooldown}, avoid-list ${rt.skips.avoid}, benched ${rt.skips.paused}, breaker ${rt.skips.breaker}). Fewer, better trades.`,
+      `Selectiveness — skipped ${skipTotal} entries (regime ${rt.skips.regime}, trend ${rt.skips.trend}, drift ${rt.skips.drift}, chase ${rt.skips.chase}, extended ${rt.skips.extended}, thin-vol ${rt.skips.thin}, late ${rt.skips.late}, stacked ${rt.skips.stacked}, unconfirmed ${rt.skips.unconfirmed}, cooldown ${rt.skips.cooldown}, avoid-list ${rt.skips.avoid}, benched ${rt.skips.paused}, breaker ${rt.skips.breaker}). Fewer, better trades.`,
     );
   }
   if (rt.halted) {
@@ -669,6 +734,32 @@ async function intradayBars(symbol: string, range = '1d'): Promise<{ bars: Bar[]
   } catch {
     return null;
   }
+}
+
+/**
+ * A long is allowed only when the last 30 minutes still have room to pay.
+ * Buying the high of that window, or a tape that already ran more than 0.55%,
+ * was the losing cluster (HAL, WIPRO, SBILIFE, Bajaj Auto, IndusInd). The
+ * trades that paid were off that high, including ones that were not already
+ * green — requiring a green half-hour kept every loser and dropped the best winner.
+ */
+export function shortTermAllowsLong(bars: { h: number; l: number; c: number }[]): { ok: boolean; why: string } {
+  if (bars.length < TAPE_BARS + 1) return { ok: false, why: 'short-term window is not ready' };
+  const last = bars[bars.length - 1];
+  const back = bars[bars.length - 1 - TAPE_BARS];
+  const window = bars.slice(-TAPE_BARS);
+  const hi = Math.max(...window.map((b) => b.h));
+  const lo = Math.min(...window.map((b) => b.l));
+  const ret = back.c > 0 ? (last.c / back.c - 1) * 100 : 0;
+  const loc = hi > lo ? (last.c - lo) / (hi - lo) : 1;
+  if (ret >= TAPE_RET_MAX) {
+    return { ok: false, why: `last 30 min already +${ret.toFixed(2)}% — that short-term profit is spent` };
+  }
+  if (loc > TAPE_LOC_MAX) {
+    return { ok: false, why: 'close is at the high of the last 30 min — this swing has no room left' };
+  }
+  const sign = ret >= 0 ? '+' : '';
+  return { ok: true, why: `30-min change ${sign}${ret.toFixed(2)}% and the close is off the half-hour high` };
 }
 
 // ---- strategy signals (intraday bars) --------------------------------------
@@ -809,7 +900,7 @@ function replayDay(
       qty,
       price: Math.round(price * 100) / 100,
       pnl: Math.round(pnl * 100) / 100,
-      retPct: retPct != null ? Math.round(retPct * 10) / 10 : null,
+      retPct: retPct != null && isFinite(retPct) ? Math.round(retPct * 100) / 100 : null,
       exitClass,
       reason,
       ...(newsDriven ? { newsDriven: true as const } : {}),
@@ -829,7 +920,7 @@ function replayDay(
     const proceeds = pos.qty * exitPrice * (1 - SLIPPAGE);
     const costBasis = pos.qty * pos.entryPrice;
     const pnl = proceeds - costBasis;
-    const retPct = ((exitPrice / pos.entryPrice - 1) * 100);
+    const retPct = roundTripRetPct(pos.qty, pos.entryPrice, exitPrice);
 
     cash += proceeds;
     b.cash += proceeds;
@@ -893,6 +984,15 @@ function replayDay(
           continue;
         }
 
+        const barMin = minutesOf(bar.ts);
+        // A bar timestamped 15:15 opens at the deadline. Flatten at its open
+        // and do not use the rest of that candle — dealing has stopped.
+        if (barMin >= SESSION_END_MIN) {
+          const px = bar.o > 0 ? bar.o : bar.c;
+          closePosition(strat.id, pos, px, 'eod', '15:15 square-off: trading stops at 15:15 IST, book is flat', timeOf(bar.ts));
+          continue;
+        }
+
         pos.highSince = Math.max(pos.highSince, bar.h);
         if (!pos.ratchetArmed && bar.h >= pos.entryPrice * (1 + TRAIL_ARM_PCT)) {
           pos.ratchetArmed = true;
@@ -901,6 +1001,8 @@ function replayDay(
         const takeProfit = pos.entryPrice * (1 + TP_PCT);
         const ratchetStop = pos.ratchetArmed ? pos.highSince * (1 - TRAIL_GIVEBACK_PCT) : -Infinity;
         const newsNow = learn ? freshNews(learn.news.get(pos.symbol), bar.ts) : { bullish: [], bearish: [] };
+        const nextBar = symBars![i + 1];
+        const nextIsAfterClose = nextBar != null && minutesOf(nextBar.ts) >= SESSION_END_MIN;
 
         let exitPrice: number | null = null;
         let exitClass: ExitClass = 'eod';
@@ -924,10 +1026,11 @@ function replayDay(
           exitClass = 'news-exit';
           newsDriven = true;
           reason = `NEWS exit on fresh bearish headline — "${newsNow.bearish[0].title.slice(0, 90)}"`;
-        } else if (dayComplete && i === symBars!.length - 1) {
+        } else if (nextIsAfterClose || (dayComplete && i === symBars!.length - 1)) {
+          // The 15:10 bar's close is the 15:15 print. That is the flat.
           exitPrice = bar.c;
           exitClass = 'eod';
-          reason = 'EOD square-off: intraday only, no overnight holding';
+          reason = '15:15 square-off: trading stops at 15:15 IST, book is flat';
         }
 
         if (exitPrice != null && exitPrice > 0) {
@@ -968,8 +1071,16 @@ function replayDay(
           const bar = bars[i];
           const sig = signalFor(strat.id, bars.slice(0, i + 1));
           if (sig?.dir !== 'BUY') continue;
-          // No new longs in the last hour. Those buys were squared off
-          // a few minutes later and booked a scratch or a loss.
+          if (minutesOf(bar.ts) >= SESSION_END_MIN) continue;
+          // The last half-hour has to still have room. A close pinned to
+          // that high, or a tape that already ran 0.55%, is a spent swing.
+          const tape = shortTermAllowsLong(bars.slice(0, i + 1));
+          if (!tape.ok) {
+            if (learn) learn.skips.extended += 1;
+            continue;
+          }
+          // No new longs in the last hour before 15:15. Those buys were
+          // squared off a few minutes later and booked a scratch or a loss.
           if (minutesOf(bar.ts) >= ENTRY_CUTOFF_MIN) {
             if (learn) learn.skips.late += 1;
             continue;
@@ -1029,7 +1140,7 @@ function replayDay(
           }
           // News fuse: fresh bearish headline blocks the entry outright.
           let newsDriven = false;
-          let why = sig.why;
+          let why = `${sig.why} · ${tape.why}`;
           if (learn) {
             const newsNow = freshNews(learn.news.get(sym), bar.ts);
             if (newsNow.bearish.length > 0) {
@@ -1039,7 +1150,7 @@ function replayDay(
             }
             if (newsNow.bullish.length > 0) {
               newsDriven = true;
-              why = `${sig.why} + NEWS: "${newsNow.bullish[0].title.slice(0, 70)}"`;
+              why = `${sig.why} · ${tape.why} + NEWS: "${newsNow.bullish[0].title.slice(0, 70)}"`;
             }
           }
           // Prefer the highest-priced stock (more liquid / stronger momentum)
@@ -1077,13 +1188,15 @@ function replayDay(
   for (const strat of STRATEGIES) {
     const pos = positions.get(strat.id);
     if (!pos) continue;
-    const symBars = dayBars.get(pos.symbol);
-    const lastBar = symBars?.[symBars.length - 1];
-    const exitPrice = lastBar ? lastBar.c : pos.entryPrice;
-    const reason = lastBar
-      ? 'EOD square-off (post-replay finalise)'
-      : 'EOD square-off (no further bar data)';
-    const time = lastBar ? timeOf(lastBar.ts) : '15:30';
+    const symBars = dayBars.get(pos.symbol) ?? [];
+    const tradable = symBars.filter((b) => minutesOf(b.ts) < SESSION_END_MIN);
+    const firstAfter = symBars.find((b) => minutesOf(b.ts) >= SESSION_END_MIN);
+    const lastTradable = tradable[tradable.length - 1];
+    const exitPrice = lastTradable ? lastTradable.c : firstAfter ? (firstAfter.o > 0 ? firstAfter.o : firstAfter.c) : pos.entryPrice;
+    const reason = lastTradable || firstAfter
+      ? '15:15 square-off (post-replay finalise)'
+      : '15:15 square-off (no further bar data)';
+    const time = lastTradable ? timeOf(lastTradable.ts) : firstAfter ? timeOf(firstAfter.ts) : '15:15';
     closePosition(strat.id, pos, exitPrice, 'eod', reason, time);
   }
 
@@ -1191,10 +1304,10 @@ async function main(): Promise<void> {
     Number(todayIST.slice(5, 7)) - 1,
     Number(todayIST.slice(8, 10)),
   );
-  const sessionEnd = todayUTC + 10 * 60 * 60_000; // 15:30 IST = 10:00 UTC
+  const sessionEnd = todayUTC + (9 * 60 + 45) * 60_000; // 15:15 IST = 09:45 UTC — dealing stops then
   const nowMs = Date.now();
   const lastBarEnd = Math.max(0, ...[...universe.values()].flatMap((b) => b[b.length - 1]?.ts ?? 0));
-  const dayComplete = lastBarEnd >= sessionEnd || nowMs > sessionEnd + 10 * 60_000 || (lastBarEnd > 0 && dayOf(lastBarEnd) === todayIST && new Date(lastBarEnd).getUTCHours() >= 10);
+  const dayComplete = nowMs >= sessionEnd || lastBarEnd >= sessionEnd;
   const hasTodayBars = [...universe.values()].some((b) => b.some((x) => dayOf(x.ts) === todayIST));
 
   if (!hasTodayBars && !dayComplete) {
@@ -1339,7 +1452,10 @@ async function seedLearning(
   console.log(`paper-daily brain: seeded, memory=${learning.history.length} sessions`);
 }
 
-main().catch((e) => {
-  console.error('paper-daily failed:', e instanceof Error ? e.message : e);
-  process.exitCode = 1;
-});
+const invokedDirectly = process.argv[1] != null && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (invokedDirectly) {
+  main().catch((e) => {
+    console.error('paper-daily failed:', e instanceof Error ? e.message : e);
+    process.exitCode = 1;
+  });
+}

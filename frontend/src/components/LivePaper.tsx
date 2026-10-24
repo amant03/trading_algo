@@ -246,12 +246,12 @@ export default function LivePaper() {
       <div className="panel reveal" style={{ marginBottom: 12, padding: '12px 16px' }}>
         <div className="panel-title" style={{ marginBottom: 8 }}>
           <h3>Live paper trading — {store.in?.date ? new Date(`${store.in.date}T12:00:00`).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : 'today’s NSE session'}</h3>
-          <span className="hint">fresh ₹10,00,000 · long-only · buy and sell the same day · 1% stop · squared off at the close</span>
+          <span className="hint">fresh ₹10,00,000 · long-only · buy and sell the same day · 1% stop · flat by 15:15</span>
         </div>
         <div className="muted" style={{ fontSize: 12.5, lineHeight: 1.55 }}>
           The automation replays today&apos;s 5-minute NSE bars during market hours. Every buy is sold the
-          same day: a 1% stop can close it early, and whatever is still open is squared off at the closing
-          bell. The book starts fresh at ₹10,00,000 the next session. For the last five sessions, see the
+          same day: a 1% stop can close it early, and whatever is still open is squared off at 15:15.
+          The book starts fresh at ₹10,00,000 the next session. For the last five sessions, see the
           Week Backtest tab.
         </div>
       </div>
