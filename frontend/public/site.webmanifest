@@ -1,0 +1,14 @@
+{
+  "name": "TradeAlgo",
+  "short_name": "TradeAlgo",
+  "description": "NSE and BSE paper-trading terminal with charts, peer comparison, and algorithm signals.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#100e0c",
+  "theme_color": "#100e0c",
+  "lang": "en-IN",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png", "purpose": "any" }
+  ]
+}

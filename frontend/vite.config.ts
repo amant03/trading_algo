@@ -9,12 +9,27 @@ import { GET as usGet } from './api/us';
 import { GET as attractiveGet } from './api/attractive';
 import { GET as techscreenGet } from './api/techscreen';
 import { GET as vibeGet } from './api/vibe';
+import { GET as macroGet } from './api/macro';
+
+/** Bake the production origin into social tags when Vercel (or VITE_SITE_URL) knows it. */
+function seoOrigin(): Plugin {
+  return {
+    name: 'seo-origin',
+    transformIndexHtml(html) {
+      const raw = (process.env.VITE_SITE_URL || process.env.VERCEL_PROJECT_PRODUCTION_URL || '').trim().replace(/\/$/, '');
+      const origin = !raw ? '' : raw.startsWith('http') ? raw : `https://${raw}`;
+      const canonical = origin ? `${origin}/` : '/';
+      const image = origin ? `${origin}/og.png` : '/og.png';
+      return html.replaceAll('__CANONICAL__', canonical).replaceAll('__OG_IMAGE__', image);
+    },
+  };
+}
 
 function nseRelay(): Plugin {
   const handle = async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
     const url = req.url ?? '';
     const path = url.split('?')[0];
-    if (path !== '/api/live' && path !== '/api/chart' && path !== '/api/search' && path !== '/api/news' && path !== '/api/us' && path !== '/api/attractive' && path !== '/api/techscreen' && path !== '/api/vibe') {
+    if (path !== '/api/live' && path !== '/api/chart' && path !== '/api/search' && path !== '/api/news' && path !== '/api/us' && path !== '/api/attractive' && path !== '/api/techscreen' && path !== '/api/vibe' && path !== '/api/macro') {
       next();
       return;
     }
@@ -29,6 +44,7 @@ function nseRelay(): Plugin {
         : path === '/api/attractive' ? await attractiveGet(request)
         : path === '/api/techscreen' ? await techscreenGet(request)
         : path === '/api/vibe' ? await vibeGet(request)
+        : path === '/api/macro' ? await macroGet()
         : await liveGet(request);
       res.statusCode = out.status;
       out.headers.forEach((v, k) => res.setHeader(k, v));
@@ -52,7 +68,7 @@ function nseRelay(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), nseRelay()],
+  plugins: [react(), seoOrigin(), nseRelay()],
   server: {
     port: 5173,
     host: '0.0.0.0',
@@ -63,7 +79,7 @@ export default defineConfig({
         changeOrigin: true,
         bypass: (req) => {
           const url = req.url ?? '';
-          if (url.startsWith('/api/live') || url.startsWith('/api/chart') || url.startsWith('/api/search') || url.startsWith('/api/news') || url.startsWith('/api/us') || url.startsWith('/api/attractive') || url.startsWith('/api/techscreen') || url.startsWith('/api/vibe')) return false as unknown as string;
+          if (url.startsWith('/api/live') || url.startsWith('/api/chart') || url.startsWith('/api/search') || url.startsWith('/api/news') || url.startsWith('/api/us') || url.startsWith('/api/attractive') || url.startsWith('/api/techscreen') || url.startsWith('/api/vibe') || url.startsWith('/api/macro')) return false as unknown as string;
           return undefined;
         },
       },

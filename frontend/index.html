@@ -1,14 +1,79 @@
 <!doctype html>
-<html lang="en">
+<html lang="en-IN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>TradeAlgo — Algorithmic Trading Terminal</title>
+    <title>TradeAlgo — NSE &amp; BSE Paper Trading Terminal</title>
+    <meta
+      name="description"
+      content="Paper-trade NSE and BSE stocks with charts, peer comparison, eight algo strategies, news sentiment, and virtual cash. No real orders."
+    />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
+    <meta name="theme-color" content="#100e0c" />
+    <meta name="application-name" content="TradeAlgo" />
+    <link rel="canonical" href="__CANONICAL__" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta property="og:title" content="TradeAlgo — NSE &amp; BSE Paper Trading Terminal" />
+    <meta
+      property="og:description"
+      content="Paper-trade NSE and BSE stocks with charts, peer comparison, eight algo strategies, news sentiment, and virtual cash. No real orders."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="TradeAlgo" />
+    <meta property="og:locale" content="en_IN" />
+    <meta property="og:url" content="__CANONICAL__" />
+    <meta property="og:image" content="__OG_IMAGE__" />
+    <meta property="og:image:alt" content="TradeAlgo — NSE and BSE paper trading terminal" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="TradeAlgo — NSE &amp; BSE Paper Trading Terminal" />
+    <meta
+      name="twitter:description"
+      content="Paper-trade NSE and BSE stocks with charts, peer comparison, eight algo strategies, news sentiment, and virtual cash. No real orders."
+    />
+    <meta name="twitter:image" content="__OG_IMAGE__" />
+    <script type="application/ld+json" id="ld-json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "name": "TradeAlgo",
+        "description": "Paper-trade NSE and BSE stocks with charts, peer comparison, eight algo strategies, news sentiment, and virtual cash. No real orders.",
+        "inLanguage": "en-IN"
+      }
+    </script>
+    <script>
+      (function () {
+        var origin = location.origin;
+        if (!origin || origin === "null") return;
+        var here = origin + location.pathname;
+        function upgrade(selector, attr) {
+          var el = document.head.querySelector(selector);
+          if (!el) return;
+          var value = el.getAttribute(attr) || "";
+          if (value.indexOf("http") === 0) return;
+          if (attr === "href" || selector.indexOf("og:url") !== -1) el.setAttribute(attr, here);
+          else el.setAttribute(attr, origin + (value.charAt(0) === "/" ? value : "/" + value));
+        }
+        upgrade('link[rel="canonical"]', "href");
+        upgrade('meta[property="og:url"]', "content");
+        upgrade('meta[property="og:image"]', "content");
+        upgrade('meta[name="twitter:image"]', "content");
+      })();
+    </script>
     <!-- Fonts are self-hosted in /fonts (see src/fonts-face.css): zero
          third-party requests on load, so privacy blockers can't stall first paint. -->
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <h1>TradeAlgo — NSE and BSE paper trading terminal</h1>
+      <p>
+        Search Indian listings, compare a stock with its peers, read charts and algorithm signals,
+        and practise with virtual cash. No real orders are sent to an exchange.
+      </p>
+      <p><a href="/about">How TradeAlgo works</a></p>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

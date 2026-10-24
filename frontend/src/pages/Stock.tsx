@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 import { fetchWithTimeout, get } from '../api';
 import { useLive, refreshSymbols, fetchRelayNews, ensureFundamentals } from '../ws';
 import { fmt, fmtPct, fmtCompact, fmtMoney, cls } from '../format';
@@ -31,6 +31,7 @@ import {
   trendBias,
 } from '../indicators';
 import { computeTech } from '../ai';
+import { usePageMeta } from '../seo';
 import type {
   Instrument,
   Snapshot,
@@ -551,6 +552,22 @@ export default function Stock() {
     toast(added ? `Added ${upper} to watchlist` : `Removed ${upper} from watchlist`, 'ok');
   };
 
+  const { pathname } = useLocation();
+  const listedShape = /^[A-Z0-9][A-Z0-9&-]{0,19}$/.test(upper);
+  const seoName = instrument?.name && instrument.name !== upper
+    ? instrument.name
+    : analysis?.name && analysis.name !== upper
+      ? analysis.name
+      : upper;
+  usePageMeta({
+    title: `${upper} Share Price, Chart & Peers | TradeAlgo`,
+    description: seoName === upper
+      ? `${upper} share price, candlestick chart, peer comparison, fundamentals, news sentiment, and paper trading on TradeAlgo.`
+      : `${seoName} (${upper}) share price, chart, peer comparison, fundamentals, news, and paper trading on TradeAlgo.`,
+    path: pathname,
+    noindex: !listedShape,
+  });
+
   if (!instrument) {
     return <div className="empty">Instrument {upper} is not a listed NSE/BSE ticker.</div>;
   }
@@ -570,9 +587,14 @@ export default function Stock() {
 
   return (
     <div>
+      <nav className="crumb" aria-label="Breadcrumb">
+        <Link to="/">Dashboard</Link>
+        <span aria-hidden="true">/</span>
+        <span>{seoName === upper ? upper : `${seoName} (${upper})`}</span>
+      </nav>
       <div className="stock-header">
         <div className="stock-title">
-          <div className="sym">{upper}</div>
+          <h1 className="sym">{upper}</h1>
           <div className="nm">{name} · {sector ?? '—'}</div>
         </div>
         <div className="stock-price-block">

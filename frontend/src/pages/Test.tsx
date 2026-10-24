@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { get } from '../api';
 import { useLive } from '../ws';
 import CoveragePanel from '../components/CoveragePanel';
@@ -458,8 +459,8 @@ export default function Test() {
             <div className="panel-title"><h3>Snapshot only — US symbol</h3></div>
             <p className="muted" style={{ fontSize: 13, lineHeight: 1.6 }}>
               The ₹ Test wallet only trades NSE/BSE listings. For US paper trading use the{' '}
-              <a href="#/us" style={{ color: 'var(--cyan)', textDecoration: 'none' }}>USA tab</a> (live screener) or{' '}
-              <a href="#/paper" style={{ color: 'var(--cyan)', textDecoration: 'none' }}>Paper Lab → Live / Week Backtest</a>{' '}
+              <Link to="/us" style={{ color: 'var(--cyan)', textDecoration: 'none' }}>USA tab</Link> (live screener) or{' '}
+              <Link to="/paper" style={{ color: 'var(--cyan)', textDecoration: 'none' }}>Paper Lab → Live / Week Backtest</Link>{' '}
               ($1,000 fresh daily, 1% stop).
             </p>
           </div>

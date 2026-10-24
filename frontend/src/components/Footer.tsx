@@ -11,10 +11,16 @@ export default function Footer() {
   return (
     <footer className="footer">
       <span className="dim">{DISCLAIMER}</span>
-      <span style={{ display: 'inline-flex', gap: 12, alignItems: 'center' }}>
+      <nav className="footer-nav" aria-label="Footer">
+        <Link to="/">Dashboard</Link>
+        <Link to="/learn">Learn</Link>
+        <Link to="/paper">Paper trading</Link>
+        <Link to="/algorithms">Algorithms</Link>
+        <Link to="/us">US market</Link>
+        <Link to="/about">About</Link>
+        <Link to="/signup">Sign up</Link>
         <span className="mono dim" style={{ fontSize: 10.5 }} title="Deployed build tag">{BUILD_TAG}</span>
-        <Link to="/about">About & how it works</Link>
-      </span>
+      </nav>
     </footer>
   );
 }

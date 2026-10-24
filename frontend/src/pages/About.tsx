@@ -1,5 +1,7 @@
 import { Link } from 'react-router-dom';
 import { DISCLAIMER } from '../components/Footer';
+import FeatureReel from '../components/FeatureReel';
+import { ABOUT_FAQ } from '../seo';
 
 export default function About() {
   return (
@@ -8,6 +10,8 @@ export default function About() {
       <p className="muted" style={{ marginBottom: 20, fontSize: 13 }}>
         A simulated paper-trading terminal for the Indian market.
       </p>
+
+      <FeatureReel />
 
       <div className="panel reveal" style={{ marginBottom: 16 }}>
         <div className="panel-title"><h3>What this is</h3></div>
@@ -39,6 +43,16 @@ export default function About() {
           <li>Auto-trading caps at 15 concurrent positions, ~3% of equity per signal.</li>
           <li>Fundamentals, peers and supply-chain data refresh on a nightly schedule.</li>
         </ul>
+      </div>
+
+      <div className="panel reveal reveal-3" style={{ marginBottom: 16 }}>
+        <div className="panel-title"><h3>Questions</h3></div>
+        {ABOUT_FAQ.map((item) => (
+          <div key={item.q} style={{ marginBottom: 14 }}>
+            <h2 style={{ fontSize: 16, marginBottom: 4 }}>{item.q}</h2>
+            <p style={{ fontSize: 14, lineHeight: 1.65 }}>{item.a}</p>
+          </div>
+        ))}
       </div>
 
       <div className="panel reveal reveal-3">

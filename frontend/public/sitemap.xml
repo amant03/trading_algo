@@ -55,4 +55,49 @@
     <changefreq>yearly</changefreq>
     <priority>0.3</priority>
   </url>
+  <url>
+    <loc>https://frontend-amantiwari201608gmailcoms-projects.vercel.app/learn</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://frontend-amantiwari201608gmailcoms-projects.vercel.app/learn/market</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://frontend-amantiwari201608gmailcoms-projects.vercel.app/learn/charts</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://frontend-amantiwari201608gmailcoms-projects.vercel.app/learn/business</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://frontend-amantiwari201608gmailcoms-projects.vercel.app/learn/futures</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://frontend-amantiwari201608gmailcoms-projects.vercel.app/learn/options</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://frontend-amantiwari201608gmailcoms-projects.vercel.app/learn/risk</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://frontend-amantiwari201608gmailcoms-projects.vercel.app/learn/systems</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://frontend-amantiwari201608gmailcoms-projects.vercel.app/learn/money</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
 </urlset>
