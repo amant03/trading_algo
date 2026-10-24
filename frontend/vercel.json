@@ -2,8 +2,6 @@
   "cleanUrls": false,
   "trailingSlash": false,
   "rewrites": [
-    { "source": "/robots.txt", "destination": "/api/robots" },
-    { "source": "/sitemap.xml", "destination": "/api/sitemap" },
     { "source": "/universe.json", "destination": "/universe.json" },
     { "source": "/snapshot.json", "destination": "/snapshot.json" },
     { "source": "/analysis.json", "destination": "/analysis.json" },

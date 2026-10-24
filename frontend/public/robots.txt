@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+
+Sitemap: https://frontend-amantiwari201608gmailcoms-projects.vercel.app/sitemap.xml
