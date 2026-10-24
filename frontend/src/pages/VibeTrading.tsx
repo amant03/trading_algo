@@ -1,286 +1,172 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fmtPct } from '../format';
-import { DESK, findInstrument, localDate, type DeskInstrument } from '../vibe/markets';
+import { benchSparks, type FactorScore } from '../vibe/alphaBench';
 import {
-  FEE,
-  INITIAL_CASH,
-  STRATEGY_LABEL,
-  defaultParams,
-  improve,
-  paramsLabel,
-  parsePrompt,
-  dailyReturns,
-  edgeDensity,
-  type Bar,
-  type Improvement,
-  type Params,
-  type StrategyId,
-} from '../vibe/engine';
-
-interface ChartPayload {
-  ticker: string;
-  name: string;
-  currency: string;
-  range: string;
-  rows: Bar[];
-}
+  ADR_PAIRS,
+  FX_TICKER,
+  SWARM,
+  VENUE_PAIRS,
+  agentCopy,
+  buildReview,
+  quoteArbitrage,
+  swarmBrief,
+  type ArbRow,
+  type DeskReview,
+  type FundStock,
+  type JournalTrade,
+} from '../vibe/deskReview';
+import { DESK, type DeskInstrument } from '../vibe/markets';
+import type { Bar } from '../vibe/engine';
 
 interface Tape {
   ticker: string;
-  name: string;
   currency: string;
   last: number;
   changePct: number;
-  bars: Bar[];
-  dates: string[];
   error?: string;
 }
 
-interface PaperStrategy {
-  id: string;
-  label: string;
-  equity: number;
-  pnl: number;
-  trades: number;
-  winRate: number | null;
-}
+type Section = 'review' | 'shadow' | 'swarm' | 'alpha' | 'lab' | 'sources';
 
-interface MemoryEntry {
-  ticker: string;
-  strategy: StrategyId;
-  params: Params;
-  at: number;
-  holdoutSharpe: number;
-}
+const SECTIONS: { id: Section; label: string }[] = [
+  { id: 'review', label: 'Review' },
+  { id: 'shadow', label: 'Shadow' },
+  { id: 'swarm', label: 'Swarm' },
+  { id: 'alpha', label: 'Alpha' },
+  { id: 'lab', label: 'Lab' },
+  { id: 'sources', label: 'Sources' },
+];
 
-const MEM_KEY = 'vibe-desk-adopted-v1';
-const TRADABLE: StrategyId[] = ['ma_cross', 'rsi_reversal', 'macd_cross', 'donchian'];
-
-const pct = (fraction: number) => fmtPct(fraction * 100);
+const inr = (n: number) => `${n < 0 ? '-' : ''}₹${Math.abs(Math.round(n)).toLocaleString('en-IN')}`;
 
 function formatQuote(price: number, currency: string): string {
   const digits = price >= 1000 ? 0 : 2;
   const locale = currency === 'INR' ? 'en-IN' : 'en-US';
   return price.toLocaleString(locale, { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
-const n2 = (n: number) => (Number.isFinite(n) ? n.toFixed(2) : '—');
-const pfText = (n: number | null) => (n == null ? 'no losses' : n.toFixed(2));
 
-function readMemory(): MemoryEntry | null {
-  try {
-    const raw = localStorage.getItem(MEM_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as MemoryEntry;
-    if (!parsed?.ticker || !parsed.params) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function writeMemory(entry: MemoryEntry) {
-  localStorage.setItem(MEM_KEY, JSON.stringify(entry));
-}
-
-async function loadChart(ticker: string, range: string): Promise<ChartPayload> {
-  const res = await fetch(`/api/vibe?ticker=${encodeURIComponent(ticker)}&range=${range}`, { cache: 'no-store' });
-  const body = (await res.json()) as ChartPayload & { error?: string };
-  if (!res.ok) throw new Error(body.error || 'Chart unavailable');
-  if (!Array.isArray(body.rows) || body.rows.length < 2) throw new Error('No daily bars');
-  return body;
+async function loadLast(ticker: string): Promise<{ price: number; currency: string; changePct: number }> {
+  const res = await fetch(`/api/vibe?ticker=${encodeURIComponent(ticker)}&range=5d`, { cache: 'no-store' });
+  const body = (await res.json()) as { currency?: string; rows?: Bar[]; error?: string };
+  if (!res.ok || !body.rows || body.rows.length < 2) throw new Error(body.error || 'no bars');
+  const last = body.rows[body.rows.length - 1];
+  const prev = body.rows[body.rows.length - 2];
+  return {
+    price: last.c,
+    currency: body.currency || '',
+    changePct: prev.c > 0 ? (last.c / prev.c - 1) * 100 : 0,
+  };
 }
 
 export default function VibeTrading() {
-  const [prompt, setPrompt] = useState('Improve a 20/50 moving-average cross on RELIANCE and validate it out of sample.');
-  const [picked, setPicked] = useState('RELIANCE.NS');
-  const [strategy, setStrategy] = useState<StrategyId>('ma_cross');
+  const [section, setSection] = useState<Section>('review');
   const [tape, setTape] = useState<Record<string, Tape>>({});
-  const [running, setRunning] = useState(false);
+  const [review, setReview] = useState<DeskReview | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<Improvement | null>(null);
-  const [runMeta, setRunMeta] = useState<{ ticker: string; name: string; currency: string; bars: number; range: string } | null>(null);
-  const [paper, setPaper] = useState<PaperStrategy[] | null>(null);
-  const [memory, setMemory] = useState<MemoryEntry | null>(null);
+  const [arbs, setArbs] = useState<ArbRow[]>([]);
+  const [arbState, setArbState] = useState('Reading same-company prices…');
+  const [factors, setFactors] = useState<FactorScore[]>([]);
+  const [remembered, setRemembered] = useState<string | null>(null);
+  const [swarm, setSwarm] = useState(SWARM[0].id);
 
   useEffect(() => {
-    setMemory(readMemory());
     let live = true;
     DESK.forEach((item) => {
-      loadChart(item.ticker, '1y')
-        .then((payload) => {
+      loadLast(item.ticker)
+        .then((quote) => {
           if (!live) return;
-          const rows = payload.rows;
-          const last = rows[rows.length - 1];
-          const prev = rows[rows.length - 2];
           setTape((curr) => ({
             ...curr,
-            [item.ticker]: {
-              ticker: item.ticker,
-              name: payload.name,
-              currency: payload.currency,
-              last: last.c,
-              changePct: prev.c > 0 ? (last.c / prev.c - 1) * 100 : 0,
-              bars: rows,
-              dates: rows.map((row) => localDate(row.t, item.timeZone)),
-            },
+            [item.ticker]: { ticker: item.ticker, currency: quote.currency, last: quote.price, changePct: quote.changePct },
           }));
         })
-        .catch((err: unknown) => {
+        .catch(() => {
           if (!live) return;
-          setTape((curr) => ({
-            ...curr,
-            [item.ticker]: {
-              ticker: item.ticker,
-              name: item.label,
-              currency: '',
-              last: 0,
-              changePct: 0,
-              bars: [],
-              dates: [],
-              error: err instanceof Error ? err.message : 'unavailable',
-            },
-          }));
+          setTape((curr) => ({ ...curr, [item.ticker]: { ticker: item.ticker, currency: '', last: 0, changePct: 0, error: 'unavailable' } }));
         });
     });
-    fetch('/paper/latest.json', { cache: 'no-store' })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((body: { strategies?: PaperStrategy[] } | null) => {
-        if (live && body?.strategies) setPaper(body.strategies);
+
+    Promise.all([
+      fetch('/paper/latest.json', { cache: 'no-store' }).then((res) => res.json()),
+      fetch('/analysis.json', { cache: 'no-store' }).then((res) => res.json()),
+    ])
+      .then(([paper, analysis]: [{ transactions?: JournalTrade[] }, { stocks?: Record<string, FundStock>; sparklines?: Record<string, [number, number][]> }]) => {
+        if (!live) return;
+        const next = buildReview(paper.transactions ?? [], analysis.stocks ?? {});
+        setReview(next);
+        setFactors(benchSparks(analysis.sparklines ?? {}));
+        if (next.adopted) {
+          const memory = { id: next.adopted.id, label: next.adopted.label, to: next.to };
+          localStorage.setItem('vibe-desk-rule-v2', JSON.stringify(memory));
+          setRemembered(next.adopted.label);
+        } else {
+          const raw = localStorage.getItem('vibe-desk-rule-v2');
+          setRemembered(raw ? 'The last adopted rule is still stored, and this pass did not replace it.' : null);
+        }
       })
-      .catch(() => {});
+      .catch((err: unknown) => {
+        if (live) setError(err instanceof Error ? err.message : 'The journal could not be read');
+      });
+
+    const tickers = new Set<string>([FX_TICKER]);
+    VENUE_PAIRS.forEach(([ns, bo]) => {
+      tickers.add(ns);
+      tickers.add(bo);
+    });
+    ADR_PAIRS.forEach((pair) => {
+      tickers.add(pair.adr);
+      tickers.add(pair.local);
+    });
+    Promise.all(
+      [...tickers].map(async (ticker) => {
+        try {
+          const quote = await loadLast(ticker);
+          return [ticker, quote.price] as const;
+        } catch {
+          return [ticker, 0] as const;
+        }
+      }),
+    ).then((rows) => {
+      if (!live) return;
+      const prices: Record<string, number> = {};
+      rows.forEach(([ticker, price]) => {
+        if (price > 0) prices[ticker] = price;
+      });
+      const found = quoteArbitrage(prices);
+      setArbs(found);
+      setArbState(found.length ? '' : 'A price leg did not come back, so the arb board is empty.');
+    });
+
     return () => {
       live = false;
     };
   }, []);
 
-  const density = useMemo(() => {
-    const series = DESK.map((item) => tape[item.ticker])
-      .filter((row): row is Tape => !!row && row.bars.length > 30)
-      .map((row) => dailyReturns(row.bars, row.dates));
-    if (series.length < 2) return null;
-    return edgeDensity(series, 0.5);
-  }, [tape]);
-
-  const loadedCount = Object.values(tape).filter((row) => row.bars.length > 0).length;
-
-  const run = async () => {
-    const parsed = parsePrompt(prompt);
-    const ticker = parsed.ticker ?? picked;
-    const nextStrategy = parsed.strategy ?? strategy;
-    const instrument = findInstrument(ticker);
-    setPicked(ticker);
-    setStrategy(nextStrategy);
-    setRunning(true);
-    setError(null);
-    try {
-      const payload = await loadChart(ticker, '2y');
-      const remembered = readMemory();
-      const seed =
-        remembered && remembered.ticker === ticker && remembered.strategy === nextStrategy
-          ? remembered.params
-          : defaultParams(nextStrategy);
-      const report = improve(payload.rows, nextStrategy, seed, 8);
-      if (report.accepted) {
-        const entry: MemoryEntry = {
-          ticker,
-          strategy: nextStrategy,
-          params: report.adopted,
-          at: Date.now(),
-          holdoutSharpe: report.testCandidate.metrics.sharpe,
-        };
-        writeMemory(entry);
-        setMemory(entry);
-      }
-      setResult(report);
-      setRunMeta({
-        ticker,
-        name: payload.name,
-        currency: payload.currency,
-        bars: payload.rows.length,
-        range: payload.range,
-      });
-    } catch (err) {
-      setResult(null);
-      setError(err instanceof Error ? err.message : 'Research run failed');
-    } finally {
-      setRunning(false);
-    }
-  };
-
-  const book = result ? (result.accepted ? result.testCandidate : result.status === 'too_short' ? result.testCandidate : result.testSeed) : null;
-  const bench = result?.testBenchmark ?? null;
-  const instrument = runMeta ? findInstrument(runMeta.ticker) : findInstrument(picked);
+  const agents = useMemo(() => (review ? agentCopy(review, arbs) : null), [review, arbs]);
+  const brief = review ? swarmBrief(swarm, review, arbs) : '';
 
   return (
     <div className="vibe">
-      <header className="vibe-hero reveal">
+      <header className="vibe-hero">
         <div>
-          <div className="vibe-kicker">Vibe-Trading · research desk</div>
-          <h1>A strategy has to survive the holdout.</h1>
+          <div className="vibe-kicker">Vibe-Trading · book review</div>
+          <h1>Read the trades. Then the price. Then the gap.</h1>
           <p>
-            Natural-language runs load daily bars across India, the US, Hong Kong, Canada, the UK, Korea, crypto, forex, and gold futures.
-            The agent mutates one strategy on the first 70% of the sample and adopts the change only when the last 30% still clears a fixed risk gate.
+            This review does not ask for a symbol. It attributes the paper journal, screens the fundamental book for quality that is still cheap, and compares two prices for the same company. A rule is kept only when the later sells still make more money.
           </p>
         </div>
         <div className="vibe-density">
-          <span>Cross-market edge density</span>
-          <strong>{density?.density == null ? 'Unknown' : pct(density.density)}</strong>
-          <em>
-            {density == null
-              ? `${loadedCount}/${DESK.length} markets in`
-              : density.density == null
-                ? 'No pair had a defined correlation'
-                : `${density.defined} pairs ≥ 0.50 · ${density.unknown} undefined`}
-          </em>
+          <span>Closed sells</span>
+          <strong>{review ? review.closed.length : '…'}</strong>
+          <em>{review ? `${review.from} → ${review.to}` : 'Reading the journal'}</em>
         </div>
       </header>
 
-      <form
-        className="vibe-prompt reveal reveal-1"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void run();
-        }}
-      >
-        <label htmlFor="vibe-q">Research prompt</label>
-        <textarea
-          id="vibe-q"
-          value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
-          rows={3}
-          spellCheck={false}
-        />
-        <div className="vibe-prompt-row">
-          <label className="vibe-select">
-            Strategy if the prompt does not name one
-            <select value={strategy} onChange={(event) => setStrategy(event.target.value as StrategyId)}>
-              {TRADABLE.map((id) => (
-                <option key={id} value={id}>
-                  {STRATEGY_LABEL[id]}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button type="submit" className="vibe-run" disabled={running}>
-            {running ? 'Running the desk…' : 'Run research'}
-          </button>
-        </div>
-      </form>
-
-      <div className="vibe-board reveal reveal-2">
-        {DESK.map((item) => {
+      <div className="vibe-board" aria-label="Cross-market tape">
+        {DESK.map((item: DeskInstrument) => {
           const row = tape[item.ticker];
-          const active = picked === item.ticker;
           return (
-            <button
-              key={item.ticker}
-              type="button"
-              className={active ? 'vibe-chip on' : 'vibe-chip'}
-              onClick={() => {
-                setPicked(item.ticker);
-                setPrompt(`Improve ${STRATEGY_LABEL[strategy].toLowerCase()} on ${item.label} and validate it out of sample.`);
-              }}
-            >
+            <div key={item.ticker} className="vibe-chip">
               <span className="vibe-chip-mkt">{item.market}</span>
               <span className="vibe-chip-sym">{item.label}</span>
               {row?.error ? (
@@ -292,187 +178,374 @@ export default function VibeTrading() {
               ) : (
                 <span className="dim">loading</span>
               )}
-            </button>
+            </div>
           );
         })}
       </div>
 
-      {memory && (
-        <p className="vibe-memory">
-          Remembered adoption: {STRATEGY_LABEL[memory.strategy]} {paramsLabel(memory.strategy, memory.params)} on {memory.ticker}, holdout Sharpe {n2(memory.holdoutSharpe)}. The next run on that pair starts from these parameters.
-        </p>
-      )}
+      <nav className="vibe-tabs" aria-label="Vibe-Trading sections">
+        {SECTIONS.map((item) => (
+          <button key={item.id} type="button" className={section === item.id ? 'on' : ''} onClick={() => setSection(item.id)}>
+            {item.label}
+          </button>
+        ))}
+      </nav>
 
       {error && <div className="vibe-error">{error}</div>}
+      {remembered && <p className="vibe-note">Remembered in this browser: {remembered}</p>}
 
-      {!result && !error && (
-        <p className="vibe-wait">
-          The desk is idle. A run fetches two years of daily bars, searches eight neighbours, and writes a train / holdout / buy-and-hold card. Fee is {(FEE * 10_000).toFixed(0)} bps per side, filled on the next open, starting cash {INITIAL_CASH.toLocaleString('en-IN')}.
-        </p>
+      {section === 'review' && (
+        <Review review={review} agents={agents} arbs={arbs} arbState={arbState} />
       )}
-
-      {result && book && bench && runMeta && (
-        <>
-          <section className="vibe-card reveal">
-            <div className="vibe-card-head">
-              <div>
-                <div className="vibe-kicker">{runMeta.name} · {runMeta.currency} · {runMeta.range} · {runMeta.bars} bars</div>
-                <h2>
-                  {STRATEGY_LABEL[result.strategy]} {paramsLabel(result.strategy, result.adopted)}
-                </h2>
-              </div>
-              <span className={result.accepted ? 'vibe-badge ok' : 'vibe-badge'}>
-                {result.status === 'too_short' ? 'Sample too short' : result.accepted ? 'Adopted' : 'Seed kept'}
-              </span>
-            </div>
-            <p className="vibe-reason">{result.reason}</p>
-            <div className="vibe-metrics">
-              <Metric label="Holdout return" value={pct(book.metrics.totalReturn)} tone={book.metrics.totalReturn >= 0 ? 'up' : 'down'} />
-              <Metric label="Buy & hold" value={pct(bench.metrics.totalReturn)} tone={bench.metrics.totalReturn >= 0 ? 'up' : 'down'} />
-              <Metric label="Sharpe" value={n2(book.metrics.sharpe)} />
-              <Metric label="Sortino" value={n2(book.metrics.sortino)} />
-              <Metric label="Max drawdown" value={pct(book.metrics.maxDrawdown)} tone="down" />
-              <Metric label="Calmar" value={n2(book.metrics.calmar)} />
-              <Metric label="Win rate" value={book.metrics.trades ? pct(book.metrics.winRate) : '—'} />
-              <Metric label="Profit factor" value={pfText(book.metrics.profitFactor)} />
-              <Metric label="Trades" value={String(book.metrics.trades)} />
-              <Metric label="Bars / year" value={String(book.metrics.barsPerYear)} />
-            </div>
-            <EquityChart strategy={book.equity} benchmark={bench.equity} />
-            <p className="vibe-note">
-              Curves are the holdout window, rebased to 100. Annualisation uses {book.metrics.barsPerYear} bars per observed calendar year.
-              {result.overfit ? ' Train Sharpe leads the holdout by more than 1.0 — treat the in-sample gain as fragile.' : ' Train and holdout Sharpes are inside the overfit band.'}
-            </p>
-          </section>
-
-          <section className="vibe-split">
-            <article className="vibe-agent">
-              <header>Quant</header>
-              <p>
-                {STRATEGY_LABEL[result.strategy]} searched from {paramsLabel(result.strategy, result.seed)} to {paramsLabel(result.strategy, result.candidate)} using training Sharpe minus half the absolute drawdown.
-                Training Sharpe moved from {n2(result.trainSeed.metrics.sharpe)} to {n2(result.trainCandidate.metrics.sharpe)} ({pct(result.trainCandidate.metrics.totalReturn)} train return, {result.trainCandidate.metrics.trades} round trips).
-                The holdout was not the objective.
-              </p>
-            </article>
-            <article className="vibe-agent">
-              <header>Risk</header>
-              <p>
-                Holdout drawdown is {pct(book.metrics.maxDrawdown)} with {book.metrics.trades} completed trades.
-                The gate asks for at least 3 trades, drawdown shallower than 45%, and either a positive Sharpe or a positive holdout return.
-                {result.accepted ? ' The candidate passed, so it replaces the seed in local memory.' : ' The candidate did not pass, so memory is unchanged.'}
-                {' '}Fills are the next session open. Each side pays {(FEE * 10_000).toFixed(0)} bps. This desk does not place orders.
-              </p>
-            </article>
-            <article className="vibe-agent">
-              <header>Shadow</header>
-              <Shadow
-                paper={paper}
-                strategy={result.strategy}
-                holdout={book.metrics.totalReturn}
-                ticker={runMeta.ticker}
-                instrument={instrument}
-              />
-            </article>
-          </section>
-
-          {result.generations.length > 0 && (
-            <section className="vibe-gens">
-              <h3>Training search</h3>
-              <div className="vibe-gen-list">
-                {result.generations.map((gen) => (
-                  <div key={gen.gen} className={gen.accepted ? 'vibe-gen on' : 'vibe-gen'}>
-                    <span>G{gen.gen}</span>
-                    <b>{paramsLabel(result.strategy, gen.params)}</b>
-                    <em className={gen.trainReturn >= 0 ? 'up' : 'down'}>{pct(gen.trainReturn)}</em>
-                    <em>Sharpe {n2(gen.trainSharpe)}</em>
-                    <em>{gen.trades} trades</em>
-                    <em>{gen.accepted ? 'kept' : 'dropped'}</em>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-        </>
+      {section === 'shadow' && review && <Shadow review={review} />}
+      {section === 'swarm' && review && (
+        <section className="vibe-card">
+          <h2>Swarm</h2>
+          <p className="vibe-reason">Each preset reads the journal, the value screen, or the same-company gaps. A preset with no book stays quiet.</p>
+          <div className="vibe-tabs">
+            {SWARM.map((item) => (
+              <button key={item.id} type="button" className={swarm === item.id ? 'on' : ''} onClick={() => setSwarm(item.id)}>
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <p>{brief}</p>
+        </section>
       )}
+      {section === 'alpha' && <Alpha factors={factors} />}
+      {section === 'lab' && review && <Lab review={review} factors={factors} />}
+      {section === 'sources' && <Sources />}
 
       <p className="vibe-attrib">
-        Research loop and metric conventions follow HKUDS/Vibe-Trading (MIT). This tab is a browser desk on Yahoo daily bars via /api/vibe — not the upstream broker, MCP, or live-order runtime. Simulation only.
+        The workflow follows the Vibe-Trading research desk: route, ground, test, deliver. Figures are counted from the paper journal and the fundamental book. No order is sent.
       </p>
     </div>
   );
 }
 
-function Metric({ label, value, tone }: { label: string; value: string; tone?: 'up' | 'down' }) {
-  return (
-    <div className="vibe-metric">
-      <span>{label}</span>
-      <strong className={tone}>{value}</strong>
-    </div>
-  );
-}
-
-function EquityChart({ strategy, benchmark }: { strategy: number[]; benchmark: number[] }) {
-  const width = 720;
-  const height = 220;
-  const pad = 16;
-  const s = rebase(strategy);
-  const b = rebase(benchmark);
-  const all = [...s, ...b];
-  if (all.length < 2) return null;
-  const min = Math.min(...all);
-  const max = Math.max(...all);
-  const span = max - min || 1;
-  const line = (values: number[]) =>
-    values
-      .map((value, i) => {
-        const x = pad + (i / Math.max(values.length - 1, 1)) * (width - pad * 2);
-        const y = height - pad - ((value - min) / span) * (height - pad * 2);
-        return `${x.toFixed(1)},${y.toFixed(1)}`;
-      })
-      .join(' ');
-  return (
-    <svg className="vibe-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Holdout equity versus buy and hold">
-      <polyline points={line(b)} className="bench" />
-      <polyline points={line(s)} className="book" />
-    </svg>
-  );
-}
-
-function rebase(values: number[]): number[] {
-  if (!values.length || !(values[0] > 0)) return values;
-  const base = values[0];
-  return values.map((value) => (value / base) * 100);
-}
-
-function Shadow({
-  paper,
-  strategy,
-  holdout,
-  ticker,
-  instrument,
+function Review({
+  review,
+  agents,
+  arbs,
+  arbState,
 }: {
-  paper: PaperStrategy[] | null;
-  strategy: StrategyId;
-  holdout: number;
-  ticker: string;
-  instrument: DeskInstrument | undefined;
+  review: DeskReview | null;
+  agents: { quant: string; risk: string; shadow: string } | null;
+  arbs: ArbRow[];
+  arbState: string;
 }) {
-  const match = paper?.find((row) => row.id === strategy);
-  if (!paper) {
-    return <p>The paper journal has not loaded, so there is no live book to set beside this shadow backtest.</p>;
-  }
+  if (!review || !agents) return <p className="vibe-wait">Reading the journal and the fundamental book.</p>;
+  const path = cumulative(review.closed.map((row) => row.pnl));
   return (
-    <p>
-      Shadow holdout on {ticker}
-      {instrument ? ` (${instrument.market})` : ''} returned {pct(holdout)}.
-      {match ? (
-        <>
-          {' '}The paper book running the same rule family, {match.label}, is a different experiment: multi-name NSE, equity ₹{Math.round(match.equity).toLocaleString('en-IN')}, realized PnL ₹{Math.round(match.pnl).toLocaleString('en-IN')}, {match.trades} trades
-          {match.winRate != null ? `, win rate ${match.winRate.toFixed(0)}%` : ''}. The shadow does not copy those fills.
-        </>
-      ) : (
-        <> No paper strategy uses this rule id. The other paper books stay listed in Paper Lab.</>
-      )}
-    </p>
+    <>
+      <ol className="vibe-steps">
+        <li>Route the journal, the fundamental book, and the same-company quotes.</li>
+        <li>Ground every rupee in a sell, a fair-value gap, or two live prices.</li>
+        <li>Test rule changes on the earlier sells, then on the later sells.</li>
+        <li>Deliver the cause, the cheap quality, and the gap. Leave the rest unadopted.</li>
+      </ol>
+
+      <section className="vibe-card">
+        <div className="vibe-card-head">
+          <div>
+            <div className="vibe-kicker">{review.trainCount} earlier sells · {review.testCount} later sells</div>
+            <h2>Root causes</h2>
+          </div>
+          <span className={review.adopted ? 'vibe-badge ok' : 'vibe-badge'}>{review.adopted ? 'Rule adopted' : 'Book unchanged'}</span>
+        </div>
+        <p className="vibe-reason">{review.reason}</p>
+        <div className="vibe-causes">
+          {review.causes.map((cause) => (
+            <article key={cause.id}>
+              <h3>{cause.title}</h3>
+              <p>{cause.detail}</p>
+            </article>
+          ))}
+        </div>
+        <EquityChart values={path} label="Cumulative closed-sell PnL" />
+        <h3>Rule search</h3>
+        <table className="vibe-table">
+          <thead>
+            <tr>
+              <th>Rule</th>
+              <th>Earlier</th>
+              <th>Later</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {review.rules.map((rule) => (
+              <tr key={rule.id} className={rule.adopted ? 'on' : ''}>
+                <td>{rule.label}</td>
+                <td className={rule.trainPnl >= 0 ? 'up' : 'down'}>{inr(rule.trainPnl)}</td>
+                <td className={rule.testPnl >= 0 ? 'up' : 'down'}>{inr(rule.testPnl)}</td>
+                <td>{rule.id === 'book' ? 'baseline' : rule.adopted ? 'adopted' : rule.trainBeat && rule.holdoutBeat ? 'eligible' : 'rejected'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+
+      <section className="vibe-split">
+        <article className="vibe-agent">
+          <header>Quant</header>
+          <p>{agents.quant}</p>
+        </article>
+        <article className="vibe-agent">
+          <header>Risk</header>
+          <p>{agents.risk}</p>
+        </article>
+        <article className="vibe-agent">
+          <header>Shadow</header>
+          <p>{agents.shadow}</p>
+        </article>
+      </section>
+
+      <section className="vibe-card">
+        <h2>Value for money</h2>
+        <p className="vibe-reason">Known ROE of at least 12, PE at most 22, and a last price 20–80% under the modelled fair value. A wider gap is a broken model, not a bargain.</p>
+        {review.deals.length === 0 ? (
+          <p>Nothing in the fundamental book clears the gate.</p>
+        ) : (
+          <table className="vibe-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Under fair value</th>
+                <th>PE</th>
+                <th>ROE</th>
+                <th>Journal</th>
+              </tr>
+            </thead>
+            <tbody>
+              {review.deals.map((deal) => (
+                <tr key={deal.symbol}>
+                  <td>
+                    <b>{deal.symbol}</b>
+                    <div className="dim">{deal.name} · {deal.sector}</div>
+                  </td>
+                  <td className="up">{deal.marginOfSafety.toFixed(0)}%</td>
+                  <td>{deal.pe ?? '—'}</td>
+                  <td>{deal.roe == null ? '—' : `${deal.roe.toFixed(1)}%`}</td>
+                  <td>{deal.traded ? 'already traded' : 'not in the journal'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+
+      <section className="vibe-card">
+        <h2>Same-company gaps</h2>
+        <p className="vibe-reason">NSE against BSE, and ADRs against the local line using the issuer share count and USDINR. A gap inside dealing costs is not a trade.</p>
+        {arbState && <p>{arbState}</p>}
+        {arbs.length > 0 && (
+          <table className="vibe-table">
+            <thead>
+              <tr>
+                <th>Pair</th>
+                <th>Gap</th>
+                <th>Read</th>
+              </tr>
+            </thead>
+            <tbody>
+              {arbs.map((row) => (
+                <tr key={row.id}>
+                  <td>{row.pair}</td>
+                  <td className={Math.abs(row.gapPct) >= (row.kind === 'adr' ? 1.5 : 0.4) ? 'amber' : ''}>{fmtPct(row.gapPct)}</td>
+                  <td>{row.note} {row.actionable ? 'Wide enough to study after costs.' : 'Inside costs.'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+    </>
   );
+}
+
+function Shadow({ review }: { review: DeskReview }) {
+  return (
+    <section className="vibe-card">
+      <h2>Shadow account</h2>
+      <ol className="vibe-steps">
+        <li>Read the journal: {review.closed.length} closed sells, {review.from} to {review.to}.</li>
+        <li>Profile behavior: mean sell resampled between {inr(review.bootstrap.low)} and {inr(review.bootstrap.high)}. {review.stopSlipCount} of {review.stopCount} stops went past -8.5%.</li>
+        <li>Extract the rule the earlier sells support: {review.adopted ? review.adopted.label : 'none that the later sells also support'}.</li>
+        <li>Run that rule on the later sells and keep it only if they improve.</li>
+        <li>The report is this page. It does not place the shadow.</li>
+      </ol>
+      <table className="vibe-table">
+        <thead>
+          <tr>
+            <th>Sleeve</th>
+            <th>Closed-sell PnL</th>
+            <th>Sells</th>
+            <th>Win rate</th>
+          </tr>
+        </thead>
+        <tbody>
+          {review.strategies.map((row) => (
+            <tr key={row.id}>
+              <td>{row.id}</td>
+              <td className={row.pnl >= 0 ? 'up' : 'down'}>{inr(row.pnl)}</td>
+              <td>{row.trades}</td>
+              <td>{(row.winRate * 100).toFixed(0)}%</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {review.repeatSymbols.length > 0 && (
+        <p className="vibe-note">
+          Repeated names: {review.repeatSymbols.map((row) => `${row.symbol} ${row.trades} sells, ${inr(row.pnl)}`).join('; ')}.
+        </p>
+      )}
+    </section>
+  );
+}
+
+function Alpha({ factors }: { factors: FactorScore[] }) {
+  const zoos = [
+    ['academic', 'Momentum, reversal, low volatility', 'Scored on the sparkline book'],
+    ['fundamental', 'Margin of safety', 'A screen on the Review tab, not a timed coefficient'],
+    ['gtja191', 'Guotai Junan 191', 'Needs the full CSI bar store; not scored on this book'],
+    ['qlib158', 'Qlib Alpha158', 'Needs the full feature panel; not scored on this book'],
+    ['alpha101', 'Kakushadze 101', 'Needs the full bar store; not scored on this book'],
+  ];
+  return (
+    <section className="vibe-card">
+      <h2>Alpha library</h2>
+      <p className="vibe-reason">Alive means the average cross-sectional rank correlation with the next five closes is above 0.02. Reversed means below -0.02. A missing input drops that name for that date.</p>
+      <div className="vibe-split">
+        {zoos.map(([id, title, note]) => (
+          <article key={id} className="vibe-agent">
+            <header>{id}</header>
+            <h3>{title}</h3>
+            <p>{note}</p>
+          </article>
+        ))}
+      </div>
+      <table className="vibe-table">
+        <thead>
+          <tr>
+            <th>Factor</th>
+            <th>Mean IC</th>
+            <th>Dates</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {factors.map((factor) => (
+            <tr key={factor.id}>
+              <td>
+                <b>{factor.label}</b>
+                <div className="dim">{factor.note}</div>
+              </td>
+              <td>{factor.meanIc == null ? '—' : factor.meanIc.toFixed(3)}</td>
+              <td>{factor.dates}</td>
+              <td>{factor.status}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
+function Lab({ review, factors }: { review: DeskReview; factors: FactorScore[] }) {
+  const alive = factors.filter((factor) => factor.status === 'alive').map((factor) => factor.label);
+  const reversed = factors.filter((factor) => factor.status === 'reversed').map((factor) => factor.label);
+  return (
+    <section className="vibe-card">
+      <div className="vibe-kicker">Research lab · this book</div>
+      <h2>What the sells actually paid for</h2>
+      <p>
+        The paper journal’s closed sells run from {review.from} to {review.to}. {review.causes[0]?.detail} The later slice is the confirmation sample: {review.testCount} sells. {review.reason}
+      </p>
+      <p>
+        On the sparkline window, {alive.length ? `${alive.join(', ')} still rank with the next five closes.` : 'no short-horizon price factor is alive.'} {reversed.length ? `${reversed.join(', ')} rank the wrong way and would be traded in reverse, or not at all.` : ''} The fundamental screen is separate: it looks for quality under fair value, and it does not pretend to have a forward return after today’s fair value.
+      </p>
+      <p className="vibe-note">Counted sells: {review.closed.length}. Resampled mean band: {inr(review.bootstrap.low)} to {inr(review.bootstrap.high)}.</p>
+    </section>
+  );
+}
+
+function Sources() {
+  const rows = [
+    ['India journal', 'Paper book', 'Serving', 'Closed sells and sleeve PnL'],
+    ['Fundamentals', 'analysis.json', 'Serving', 'Fair value, PE, ROE, Graham and Buffett scores'],
+    ['India, US, HK, Canada, UK, Korea, crypto, forex, gold', 'Yahoo daily', 'Serving', 'Tape and same-company quotes'],
+    ['USDINR', 'INR=X', 'Serving', 'ADR translation'],
+    ['China A-shares, funds, macro, options chains, 13F, filings', 'Not connected', 'Silent', 'A missing source stays blank'],
+  ];
+  return (
+    <section className="vibe-card">
+      <h2>Sources and engines</h2>
+      <p className="vibe-reason">The India delivery book is the only engine with fills. Other markets on the tape are prices, not backtests. Live broker orders stay off.</p>
+      <table className="vibe-table">
+        <thead>
+          <tr>
+            <th>Market</th>
+            <th>Source</th>
+            <th>State</th>
+            <th>Use</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row[0]}>
+              {row.map((cell, index) => (
+                <td key={`${row[0]}-${index}`}>{cell}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <h3>Commands on this book</h3>
+      <table className="vibe-table">
+        <thead>
+          <tr>
+            <th>Command</th>
+            <th>What it reads</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>/attrib</td><td>Sleeve, exit, and name attribution on Review and Shadow.</td></tr>
+          <tr><td>/screen</td><td>The value-for-money gate. No symbol is typed.</td></tr>
+          <tr><td>/memo</td><td>The Lab note, written from the same counts.</td></tr>
+          <tr><td>/dcf</td><td>The fair value already stored on each name. This desk does not fit a second model.</td></tr>
+          <tr><td>/earnings</td><td>The journal has no earnings calendar, so the command stays blank.</td></tr>
+          <tr><td>/comps</td><td>A comparison needs a subject company. This review does not take one.</td></tr>
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
+function cumulative(pnls: number[]): number[] {
+  const out: number[] = [];
+  let total = 0;
+  for (const pnl of pnls) {
+    total += pnl;
+    out.push(total);
+  }
+  return out;
+}
+
+function EquityChart({ values, label }: { values: number[]; label: string }) {
+  if (values.length < 2) return null;
+  const width = 720;
+  const height = 180;
+  const pad = 12;
+  const min = Math.min(...values, 0);
+  const max = Math.max(...values, 0);
+  const span = max - min || 1;
+  const points = values
+    .map((value, index) => {
+      const x = pad + (index / (values.length - 1)) * (width - pad * 2);
+      const y = height - pad - ((value - min) / span) * (height - pad * 2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+  return <svg className="vibe-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={label}><polyline points={points} className="book" /></svg>;
 }

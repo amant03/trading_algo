@@ -50,7 +50,7 @@ async function yahooJson<T>(pathAndQuery: string, timeoutMs = 12_000): Promise<T
   return null;
 }
 
-const RANGES = new Set(['6mo', '1y', '2y', '5y']);
+const RANGES = new Set(['5d', '6mo', '1y', '2y', '5y']);
 const TICKER = /^\^?[A-Z0-9][A-Z0-9.^=-]{0,24}$/;
 
 type ChartBody = {

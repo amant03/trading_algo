@@ -1858,7 +1858,6 @@ label {
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   padding: 10px 10px 8px;
-  cursor: pointer;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -1932,8 +1931,86 @@ label {
 }
 .vibe-gen.on { background: rgba(226, 177, 90, 0.08); color: var(--text); }
 .vibe-attrib { font-size: 12px; }
+.vibe-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.vibe-tabs button {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font: 12px/1.2 var(--font-mono);
+  letter-spacing: 0.04em;
+}
+.vibe-tabs button.on {
+  color: var(--ink);
+  background: var(--amber);
+  border-color: transparent;
+}
+.vibe-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+.vibe-steps li {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.vibe-steps li::before {
+  counter-increment: step;
+  content: counter(step);
+  display: block;
+  font-family: var(--font-mono);
+  color: var(--amber);
+  margin-bottom: 6px;
+}
+.vibe-causes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+.vibe-causes article {
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+}
+.vibe-causes h3, .vibe-card h3 { font-size: 15px; margin: 0 0 6px; }
+.vibe-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-top: 8px;
+}
+.vibe-table th {
+  text-align: left;
+  color: var(--dim);
+  font: 11px/1.2 var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 8px 8px 6px;
+  border-bottom: 1px solid var(--line);
+}
+.vibe-table td {
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.vibe-table tr.on td { background: rgba(226, 177, 90, 0.08); }
+.vibe-table .amber { color: var(--amber); }
 @media (max-width: 980px) {
-  .vibe-hero, .vibe-split, .vibe-metrics { grid-template-columns: 1fr; }
+  .vibe-hero, .vibe-split, .vibe-metrics, .vibe-steps { grid-template-columns: 1fr; }
   .vibe h1 { font-size: 28px; max-width: none; }
   .vibe-prompt-row { flex-direction: column; align-items: stretch; }
   .vibe-gen { grid-template-columns: 1fr 1fr; }
