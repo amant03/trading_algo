@@ -120,12 +120,6 @@ jobs:
         env:
           NEWS_MAX_SYMBOLS: '40'
 
-      # Sector-wide news (market hours): member headlines re-tagged by sector
-      # + policy/regulator RSS wires → frontend/public/sector-news.json.
-      - name: Sector news (market hours)
-        if: env.MODE == 'news'
-        run: node node_modules/tsx/dist/cli.mjs scripts/ci/sector-news.ts
-
       - name: Pre-stage paper state (market hours)
         if: env.MODE == 'news'
         run: |
@@ -146,6 +140,14 @@ jobs:
             curl -sfL "https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/$f" \
               -o "frontend/public/$f" || echo "no $f yet"
           done
+
+      # Must run AFTER the pre-stage curl above. That curl restores the previous
+      # sector-news.json so a skipped run cannot wipe it, and running this
+      # earlier lets the curl replace the fresh file with the stale snapshot
+      # (the file was stuck on 2026-09-28 while news.json kept updating).
+      - name: Sector news (market hours)
+        if: env.MODE == 'news'
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/sector-news.ts
 
       - name: Paper live-stop (market hours)
         if: env.MODE == 'news'
@@ -328,6 +330,12 @@ jobs:
               -o "frontend/public/$f" || echo "no previous $f — first run"
           done
 
+      # Same daily refresh as per-stock news. After the pre-stage curl so the
+      # fresh sector-news.json is what gets committed, not the previous snapshot.
+      - name: Sector news (daily)
+        if: env.MODE == 'full'
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/sector-news.ts
+
       # Paper trading: 5 classic strategies on a ₹1,00,000 virtual account,
       # advanced one trading day per run (see scripts/ci/paper.ts).
       - name: Paper trading (daily)
@@ -403,8 +411,8 @@ jobs:
 
       # Audit trail: commit the run's artifacts to `automation-data` (the
       # deployed UI reads the latest snapshot straight from there — no redeploy
-      # needed). Market-hours runs only touch news.json; deep runs also bump
-      # snapshot/analysis and promote to main daily / on manual runs.
+      # needed). Market-hours runs refresh news.json and sector-news.json;
+      # deep runs also bump snapshot/analysis and promote to main daily / on manual runs.
       - name: Commit audit trail & UI snapshot
         run: |
           git config user.name "automation-bot"

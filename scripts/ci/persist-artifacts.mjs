@@ -219,13 +219,18 @@ async function unionSectorNews() {
         console.log('merge-artifacts: sector-news.json <- upstream snapshot (was missing locally)');
       } else {
         const sectors = local.sectors ?? {};
+        const cutoff = Date.now() - 7 * 86_400_000;
+        const fresh = (item) => {
+          const t = Date.parse(item?.publishedAt ?? '');
+          return Number.isFinite(t) && t >= cutoff;
+        };
         let added = 0;
         for (const [sector, list] of Object.entries(remote.sectors)) {
           if (!Array.isArray(list)) continue;
-          const mine = Array.isArray(sectors[sector]) ? sectors[sector] : [];
+          const mine = (Array.isArray(sectors[sector]) ? sectors[sector] : []).filter(fresh);
           const seen = new Set(mine.map((x) => x?.title));
           for (const item of list) {
-            if (item?.title && !seen.has(item.title)) {
+            if (item?.title && fresh(item) && !seen.has(item.title)) {
               mine.push(item);
               seen.add(item.title);
               added += 1;

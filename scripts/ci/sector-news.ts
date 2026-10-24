@@ -10,7 +10,10 @@
 //   { generatedAt, sectors: { SECTOR: [{ title, source, url, publishedAt,
 //     symbols: [matched members], kind: 'member'|'sector' }] } }
 //
-// Run: npx tsx scripts/ci/sector-news.ts (market-hours, after news.ts)
+// Run: npx tsx scripts/ci/sector-news.ts
+// Workflow: after the pre-stage curl of sector-news.json (market-hours and
+// the daily full run), otherwise that curl puts the previous snapshot back
+// and the published file never moves.
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
@@ -22,7 +25,22 @@ const SECTORS_RAW_URL = 'https://raw.githubusercontent.com/amant03/trading_algo/
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36';
 const PER_SECTOR = 30;
+const KEEP_DAYS = 7;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function abortAfter(ms: number): AbortSignal {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  if (typeof timer === 'object' && timer && 'unref' in timer) timer.unref();
+  return ctrl.signal;
+}
+
+function stampOf(value: unknown): number {
+  if (!value || typeof value !== 'object') return 0;
+  const o = value as { generatedAt?: string; updatedAt?: string };
+  const t = Date.parse(o.generatedAt ?? o.updatedAt ?? '');
+  return Number.isFinite(t) ? t : 0;
+}
 
 interface SectorItem {
   title: string;
@@ -75,7 +93,7 @@ async function fetchRss(query: string): Promise<RssArticle[]> {
   const out: RssArticle[] = [];
   try {
     const url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-IN&gl=IN&ceid=IN%3Aen`;
-    const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15_000) });
+    const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: abortAfter(15_000) });
     if (!res.ok) return out;
     const xml = await res.text();
     for (const m of xml.matchAll(/<item>([\s\S]{0,4000}?)<\/item>/g)) {
@@ -94,18 +112,23 @@ async function fetchRss(query: string): Promise<RssArticle[]> {
 }
 
 async function loadJson<T>(local: string, remote: string): Promise<T | null> {
+  // Checkout copies on main lag the automation-data branch. Use whichever
+  // snapshot is newer so a run still refreshes when the local file is stale.
+  let fromDisk: T | null = null;
   try {
-    if (existsSync(local)) return JSON.parse(readFileSync(local, 'utf8')) as T;
+    if (existsSync(local)) fromDisk = JSON.parse(readFileSync(local, 'utf8')) as T;
   } catch {
-    // fall through to remote
+    fromDisk = null;
   }
+  let fromRemote: T | null = null;
   try {
-    const res = await fetch(remote, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(20_000) });
-    if (res.ok) return (await res.json()) as T;
+    const res = await fetch(remote, { headers: { 'User-Agent': UA }, signal: abortAfter(20_000) });
+    if (res.ok) fromRemote = (await res.json()) as T;
   } catch {
-    // unavailable
+    fromRemote = null;
   }
-  return null;
+  if (fromDisk && fromRemote) return stampOf(fromRemote) > stampOf(fromDisk) ? fromRemote : fromDisk;
+  return fromDisk ?? fromRemote;
 }
 
 async function main(): Promise<void> {
@@ -128,11 +151,16 @@ async function main(): Promise<void> {
   const newsFile = await loadJson<{ items?: Record<string, Array<{ title?: string; source?: string; url?: string; publishedAt?: string; symbol?: string }>> }>(
     join(PUB, 'news.json'), NEWS_RAW_URL,
   );
+  const cutoff = Date.now() - KEEP_DAYS * 86_400_000;
   const buckets = new Map<string, SectorItem[]>();
-  const push = (sector: string, item: SectorItem) => {
+  const push = (sector: string, item: SectorItem): boolean => {
+    const published = Date.parse(item.publishedAt);
+    if (!Number.isFinite(published) || published < cutoff) return false;
     const arr = buckets.get(sector) ?? [];
-    if (!arr.some((x) => x.title === item.title)) arr.push(item);
+    if (arr.some((x) => x.title === item.title)) return false;
+    arr.push(item);
     buckets.set(sector, arr);
+    return true;
   };
 
   // 1) member headlines re-tagged to sectors
@@ -142,12 +170,11 @@ async function main(): Promise<void> {
     if (!sector) continue;
     for (const a of list ?? []) {
       if (!a?.title) continue;
-      push(sector, {
+      if (push(sector, {
         title: a.title, source: a.source ?? 'Google News', url: a.url ?? '',
         publishedAt: a.publishedAt ?? new Date().toISOString(),
         symbols: [sym.toUpperCase()], kind: 'member',
-      });
-      memberCount += 1;
+      })) memberCount += 1;
     }
   }
 
@@ -165,12 +192,11 @@ async function main(): Promise<void> {
           if (sym.length > 3 && upper.includes(` ${sym} `)) hits.push(sym);
           if (hits.length >= 5) break;
         }
-        push(sector, {
+        if (push(sector, {
           title: a.title, source: a.source, url: a.link,
           publishedAt: (() => { const t = Date.parse(a.pubDate); return isFinite(t) ? new Date(t).toISOString() : new Date().toISOString(); })(),
           symbols: hits, kind: 'sector',
-        });
-        wireCount += 1;
+        })) wireCount += 1;
       }
       await sleep(500);
     }

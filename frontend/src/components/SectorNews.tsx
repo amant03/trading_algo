@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { fetchWithTimeout } from '../api';
 import { SentimentBadge } from './Badge';
 import { classifySentiment } from '../lib/sentiment';
 
@@ -11,34 +12,62 @@ interface SectorItem {
   kind: 'member' | 'sector';
 }
 
+// Raw GitHub first. jsDelivr keeps the previous file for hours after a commit,
+// which left this panel on the 28 Sep snapshot while stock news moved on.
+// The same-origin copy is only the last deploy's fallback.
 const SECTOR_URLS = [
-  'https://cdn.jsdelivr.net/gh/amant03/trading_algo@automation-data/frontend/public/sector-news.json',
   'https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/sector-news.json',
+  'https://cdn.jsdelivr.net/gh/amant03/trading_algo@automation-data/frontend/public/sector-news.json',
   '/sector-news.json',
 ];
 const MAP_URLS = [
-  'https://cdn.jsdelivr.net/gh/amant03/trading_algo@automation-data/frontend/public/sectors.json',
   'https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/sectors.json',
+  'https://cdn.jsdelivr.net/gh/amant03/trading_algo@automation-data/frontend/public/sectors.json',
   '/sectors.json',
 ];
 
+const REFRESH_MS = 10 * 60 * 1000;
+
 let mapCache: Record<string, { sector: string; industry: string; extra?: string[] }> | null = null;
 let newsCache: Record<string, SectorItem[]> | null = null;
+let cachedAt = 0;
+let inflight: Promise<void> | null = null;
 
 async function fetchFirst<T>(urls: string[], pick: (j: T) => boolean): Promise<T | null> {
   for (const url of urls) {
     try {
-      const res = await fetch(url, { cache: 'no-store' });
+      const res = await fetchWithTimeout(url, { cache: 'no-store' }, 12_000);
       if (!res.ok) continue;
       const ct = res.headers.get('content-type') ?? '';
       if (ct.includes('text/html')) continue;
       const data = (await res.json()) as T;
       if (pick(data)) return data;
     } catch {
-      // try next mirror
+      // try next mirror — a stalled CDN must not pin the panel
     }
   }
   return null;
+}
+
+function loadCaches(): Promise<void> {
+  if (mapCache && newsCache && Date.now() - cachedAt < REFRESH_MS) return Promise.resolve();
+  if (inflight) return inflight;
+  inflight = (async () => {
+    const [m, n] = await Promise.all([
+      fetchFirst<{ sectors?: Record<string, { sector: string; industry: string; extra?: string[] }> }>(
+        MAP_URLS, (j) => !!j?.sectors,
+      ),
+      fetchFirst<{ sectors?: Record<string, SectorItem[]> }>(
+        SECTOR_URLS, (j) => !!j?.sectors,
+      ),
+    ]);
+    if (m?.sectors) mapCache = m.sectors;
+    if (n?.sectors) newsCache = n.sectors;
+    if (mapCache && newsCache) cachedAt = Date.now();
+  })().finally(() => {
+    inflight = null;
+  });
+  return inflight;
 }
 
 /** Sector-wide headlines for a stock: policy/regulator news affecting its
@@ -50,23 +79,14 @@ export default function SectorNews({ symbol }: { symbol: string }) {
   useEffect(() => {
     let live = true;
     (async () => {
-      if (!mapCache) {
-        const m = await fetchFirst<{ sectors?: Record<string, { sector: string; industry: string; extra?: string[] }> }>(
-          MAP_URLS, (j) => !!j?.sectors,
-        );
-        if (m?.sectors) mapCache = m.sectors;
-      }
+      await loadCaches();
       const entry = mapCache?.[symbol.toUpperCase()];
       const secList = entry ? [entry.sector, ...(entry.extra ?? [])].filter(Boolean) : [];
-      const sec = secList[0] ?? null;
       if (!live) return;
       setSectors(secList);
-      if (!secList.length) return;
-      if (!newsCache) {
-        const n = await fetchFirst<{ sectors?: Record<string, SectorItem[]> }>(
-          SECTOR_URLS, (j) => !!j?.sectors,
-        );
-        if (n?.sectors) newsCache = n.sectors;
+      if (!secList.length) {
+        setItems([]);
+        return;
       }
       if (!live) return;
       // Merge primary + secondary sector buckets, newest first, deduped.
@@ -86,7 +106,7 @@ export default function SectorNews({ symbol }: { symbol: string }) {
     return () => { live = false; };
   }, [symbol]);
 
-  if (sectors == null || items == null) return null;
+  if (sectors == null || items == null || sectors.length === 0) return null;
   return (
     <div className="panel" style={{ marginBottom: 16 }}>
       <div className="panel-title">
