@@ -3,7 +3,52 @@
 // `.NS`; this route accepts an explicit Yahoo ticker so US, HK, Canada, UK,
 // Korea, crypto, forex, and futures can be loaded beside India.
 
-import { jsonHeaders, yahooJson, type OHLCV } from './chart';
+// Kept inside this file on purpose. Importing ./chart.ts pulls that route's
+// GET handler into this function, and Vercel then crashes the invocation.
+
+const YAHOO_HOSTS = ['https://query1.finance.yahoo.com', 'https://query2.finance.yahoo.com'];
+
+const YAHOO_HEADERS: Record<string, string> = {
+  'User-Agent':
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+  Accept: 'application/json,text/plain,*/*',
+  'Accept-Language': 'en-US,en;q=0.9',
+  Referer: 'https://finance.yahoo.com/',
+  Origin: 'https://finance.yahoo.com',
+};
+
+interface OHLCV {
+  t: number;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+}
+
+function jsonHeaders(): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-store, max-age=0',
+    'Access-Control-Allow-Origin': '*',
+  };
+}
+
+async function yahooJson<T>(pathAndQuery: string, timeoutMs = 12_000): Promise<T | null> {
+  for (const host of YAHOO_HOSTS) {
+    try {
+      const res = await fetch(`${host}${pathAndQuery}`, {
+        headers: YAHOO_HEADERS,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!res.ok) continue;
+      return (await res.json()) as T;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
 
 const RANGES = new Set(['6mo', '1y', '2y', '5y']);
 const TICKER = /^\^?[A-Z0-9][A-Z0-9.^=-]{0,24}$/;
@@ -85,6 +130,17 @@ async function load(ticker: string, range: string): Promise<{
 }
 
 export async function GET(request: Request): Promise<Response> {
+  try {
+    return await handle(request);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err instanceof Error ? err.message : 'vibe chart failed' }), {
+      status: 500,
+      headers: jsonHeaders(),
+    });
+  }
+}
+
+async function handle(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const ticker = (url.searchParams.get('ticker') ?? '').trim().toUpperCase();
   const range = (url.searchParams.get('range') ?? '2y').toLowerCase();
