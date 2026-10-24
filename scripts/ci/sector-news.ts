@@ -66,6 +66,7 @@ const SECTOR_QUERIES: Record<string, string[]> = {
   'Non-Energy Minerals': ['steel metal stocks India'],
   'Retail Trade': ['retail consumption India stocks'],
   Transportation: ['logistics aviation India stocks'],
+  'Food Delivery': ['Eternal Zomato food delivery India stock', 'Swiggy Instamart Blinkit quick commerce India'],
   'Technology Services': ['Indian IT services stocks'],
 };
 

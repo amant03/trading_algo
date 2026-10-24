@@ -21,6 +21,14 @@ const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 // news finds the right stocks even when the primary sector is generic —
 // e.g. POLICYBZR (Internet Software) also watches Finance for IRDAI and
 // insurance-sector headlines.
+// TradingView files these food-delivery platforms under Air Freight/Couriers,
+// so a food stock was reading logistics and aviation headlines. The corrected
+// sector is what sector news buckets on.
+const CORRECTIONS: Record<string, { sector: string; industry: string }> = {
+  ETERNAL: { sector: 'Food Delivery', industry: 'Food Delivery / Quick Commerce' },
+  SWIGGY: { sector: 'Food Delivery', industry: 'Food Delivery / Quick Commerce' },
+};
+
 const SECONDARY: [RegExp, string][] = [
   [/insur/i, 'Finance'],
   [/\bbanks?\b|banking/i, 'Finance'],
@@ -120,6 +128,9 @@ async function main(): Promise<void> {
     }
     if ((i / BATCH) % 10 === 0) console.log(`sectors: ${Math.min(i + BATCH, entries.length)}/${entries.length}`);
     await sleep(400);
+  }
+  for (const [sym, fix] of Object.entries(CORRECTIONS)) {
+    if (sectors[sym]) sectors[sym] = { sector: fix.sector, industry: fix.industry };
   }
   mkdirSync(PUB, { recursive: true });
   writeFileSync(OUT, JSON.stringify({ updatedAt: new Date().toISOString(), count: Object.keys(sectors).length, sectors }));
