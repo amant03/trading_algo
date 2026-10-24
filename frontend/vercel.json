@@ -21,7 +21,8 @@
     "api/tv.ts": { "maxDuration": 30 },
     "api/us.ts": { "maxDuration": 30 },
     "api/attractive.ts": { "maxDuration": 30 },
-    "api/techscreen.ts": { "maxDuration": 30 }
+    "api/techscreen.ts": { "maxDuration": 30 },
+    "api/vibe.ts": { "maxDuration": 30 }
   },
   "headers": [
     {

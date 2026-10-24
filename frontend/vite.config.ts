@@ -8,12 +8,13 @@ import { GET as newsGet } from './api/news';
 import { GET as usGet } from './api/us';
 import { GET as attractiveGet } from './api/attractive';
 import { GET as techscreenGet } from './api/techscreen';
+import { GET as vibeGet } from './api/vibe';
 
 function nseRelay(): Plugin {
   const handle = async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
     const url = req.url ?? '';
     const path = url.split('?')[0];
-    if (path !== '/api/live' && path !== '/api/chart' && path !== '/api/search' && path !== '/api/news' && path !== '/api/us' && path !== '/api/attractive' && path !== '/api/techscreen') {
+    if (path !== '/api/live' && path !== '/api/chart' && path !== '/api/search' && path !== '/api/news' && path !== '/api/us' && path !== '/api/attractive' && path !== '/api/techscreen' && path !== '/api/vibe') {
       next();
       return;
     }
@@ -27,6 +28,7 @@ function nseRelay(): Plugin {
         : path === '/api/us' ? await usGet(request)
         : path === '/api/attractive' ? await attractiveGet(request)
         : path === '/api/techscreen' ? await techscreenGet(request)
+        : path === '/api/vibe' ? await vibeGet(request)
         : await liveGet(request);
       res.statusCode = out.status;
       out.headers.forEach((v, k) => res.setHeader(k, v));
@@ -61,7 +63,7 @@ export default defineConfig({
         changeOrigin: true,
         bypass: (req) => {
           const url = req.url ?? '';
-          if (url.startsWith('/api/live') || url.startsWith('/api/chart') || url.startsWith('/api/search') || url.startsWith('/api/news') || url.startsWith('/api/us') || url.startsWith('/api/attractive') || url.startsWith('/api/techscreen')) return false as unknown as string;
+          if (url.startsWith('/api/live') || url.startsWith('/api/chart') || url.startsWith('/api/search') || url.startsWith('/api/news') || url.startsWith('/api/us') || url.startsWith('/api/attractive') || url.startsWith('/api/techscreen') || url.startsWith('/api/vibe')) return false as unknown as string;
           return undefined;
         },
       },

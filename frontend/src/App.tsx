@@ -15,6 +15,7 @@ import Test from './pages/Test';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import About from './pages/About';
+import VibeTrading from './pages/VibeTrading';
 import { Toasts } from './components/Toasts';
 
 export default function App() {
@@ -35,6 +36,7 @@ export default function App() {
             <Route path="/watchlist" element={<RequireAuth><Watchlist /></RequireAuth>} />
             <Route path="/test" element={<Test />} />
             <Route path="/paper" element={<Paper />} />
+            <Route path="/vibe" element={<VibeTrading />} />
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<Signup />} />
             <Route path="/about" element={<About />} />

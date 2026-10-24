@@ -10,6 +10,7 @@ const NAV = [
   { to: '/trading', label: 'Trading' },
   { to: '/algorithms', label: 'Algorithms' },
   { to: '/paper', label: 'Paper Lab' },
+  { to: '/vibe', label: 'Vibe-Trading' },
   { to: '/watchlist', label: 'Watchlist' },
   { to: '/test', label: 'Test' },
 ];
