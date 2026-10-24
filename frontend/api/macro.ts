@@ -2,8 +2,6 @@
 // Brent/WTI, gold/silver, copper/aluminium, and USD/INR.
 // India has no clean public tape for these in the NSE relay.
 
-import { YAHOO_HEADERS, YAHOO_HOSTS } from './live';
-
 export interface MacroQuote {
   id: string;
   name: string;
@@ -13,6 +11,20 @@ export interface MacroQuote {
   price: number;
   changePct: number;
 }
+
+const YAHOO_HOSTS = [
+  'https://query1.finance.yahoo.com',
+  'https://query2.finance.yahoo.com',
+];
+
+const YAHOO_HEADERS: Record<string, string> = {
+  'User-Agent':
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+  Accept: 'application/json,text/plain,*/*',
+  'Accept-Language': 'en-IN,en;q=0.9',
+  Referer: 'https://finance.yahoo.com/',
+  Origin: 'https://finance.yahoo.com',
+};
 
 const SPECS: { id: string; name: string; group: MacroQuote['group']; ticker: string; unit: string }[] = [
   { id: 'brent', name: 'Brent crude', group: 'Crude oil', ticker: 'BZ=F', unit: 'USD/bbl' },
