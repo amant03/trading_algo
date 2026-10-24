@@ -1,0 +1,30 @@
+.vibe-names {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  gap: 12px;
+  align-items: end;
+  margin-top: 12px;
+}
+.vibe-names label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--dim);
+  font: 11px/1.2 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.vibe-names input {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line2);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  font: 16px/1.2 var(--font-display);
+  letter-spacing: 0;
+  text-transform: none;
+}
+.vibe-names input:focus { outline: 1px solid rgba(226, 177, 90, 0.7); }
+@media (max-width: 980px) {
+  .vibe-names { grid-template-columns: 1fr; }
+}
