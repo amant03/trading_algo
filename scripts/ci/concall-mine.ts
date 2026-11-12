@@ -290,9 +290,19 @@ function section(html: string, marker: string, span = 28000): string {
   return html.slice(i, i + span);
 }
 
+function parseConcallMarkdown(text: string): { period: string | null; url: string }[] {
+  const out: { period: string | null; url: string }[] = [];
+  const re = /(?:^|\n)\*\s+([A-Z][a-z]{2}\s+20\d{2})\s*\n+\[Transcript\]\((https?:\/\/[^)\s]+)/g;
+  for (const m of text.matchAll(re)) {
+    out.push({ period: m[1], url: m[2] });
+    if (out.length >= 2) break;
+  }
+  return out;
+}
+
 export function parseConcallLinks(html: string): { period: string | null; url: string }[] {
   const sec = section(html, 'class="documents concalls');
-  if (!sec) return [];
+  if (!sec) return parseConcallMarkdown(html);
   const out: { period: string | null; url: string }[] = [];
   for (const li of sec.split(/<li\b/).slice(1)) {
     const period = (li.match(/\b([A-Z][a-z]{2}\s+20\d{2})\b/) ?? [])[1] ?? null;
@@ -306,9 +316,31 @@ export function parseConcallLinks(html: string): { period: string | null; url: s
   return out;
 }
 
+function announcementFromMarkdown(label: string, url: string): { title: string; url: string; date: string | null } | null {
+  const head = label.split(' - ')[0].replace(/\s+\d+\s*h$/i, '').trim();
+  const dated = head.match(/^(.*?)(?:\s+)(\d{1,2}\s+[A-Za-z]{3,9}(?:\s+20\d{2})?)$/);
+  const title = (dated ? dated[1] : head).trim();
+  if (title.length < 8 || /^annual report/i.test(title)) return null;
+  const date = dated ? parseLooseDate(dated[2]) : null;
+  return { title: clip(title, 180), url, date };
+}
+
 export function parseAnnouncements(html: string): { title: string; url: string; date: string | null }[] {
   const start = html.indexOf('>Announcements<');
-  if (start < 0) return [];
+  if (start < 0) {
+    const mark = html.search(/#{2,3}\s+Announcements/i);
+    if (mark < 0) return [];
+    const end = html.slice(mark + 10).search(/\n#{2,3}\s+/);
+    const sec = html.slice(mark, end > 0 ? mark + 10 + end : mark + 8000);
+    const out: { title: string; url: string; date: string | null }[] = [];
+    for (const m of sec.matchAll(/\*\s+\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g)) {
+      const row = announcementFromMarkdown(m[1], m[2]);
+      if (!row) continue;
+      out.push(row);
+      if (out.length >= 6) break;
+    }
+    return out;
+  }
   const end = html.indexOf('annual-reports', start);
   const sec = html.slice(start, end > start ? end : start + 22000);
   const out: { title: string; url: string; date: string | null }[] = [];
@@ -328,13 +360,16 @@ export function parseAnnouncements(html: string): { title: string; url: string; 
 export function parseAnnualLink(html: string): { url: string; label: string; year: string | null } | null {
   const sec = section(html, 'class="documents annual-reports', 6000);
   const m = sec.match(/href="([^"]+)"[^>]*>\s*Annual Report\s+(\d{4})/i);
-  if (!m) return null;
-  return { url: m[1].replace(/&amp;/g, '&'), label: `Annual Report ${m[2]}`, year: m[2] };
+  if (m) return { url: m[1].replace(/&amp;/g, '&'), label: `Annual Report ${m[2]}`, year: m[2] };
+  const md = html.match(/\[Annual Report\s+(\d{4})\]\((https?:\/\/[^)\s]+)\)/i);
+  if (!md) return null;
+  return { url: md[2], label: `Annual Report ${md[1]}`, year: md[1] };
 }
 
 export function parseRatingLink(html: string, today = new Date()): DocLink | null {
   const sec = section(html, 'class="documents credit-ratings', 9000);
-  const m = sec.match(/<a href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i);
+  const md = html.match(/\[(Rating update[^\]]*)\]\((https?:\/\/[^)\s]+)\)/i);
+  const m = sec.match(/<a href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i) ?? (md ? [md[0], md[2], md[1]] as RegExpMatchArray : null);
   if (!m) return null;
   const url = m[1].replace(/&amp;/g, '&');
   const inner = m[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();

@@ -67,6 +67,32 @@ const html = `
 </ul>
 <div class="documents annual-reports">
 `;
+const reader = `
+### Announcements
+
+*   [Board outcome on buyback 16 Oct](https://www.bseindia.com/stockinfo/AnnPdfOpen.aspx?Pname=ann.pdf)
+*   [Annual Report 2026](https://www.bseindia.com/xml-data/corpfiling/AttachHis/ar.pdf)
+
+### Credit ratings
+
+*   [Rating update 26 Jun from crisil](https://www.crisil.com/mnt/winshare/Ratings/RatingList/RatingDocs/Example.html)
+
+*   Oct 2026
+
+[Transcript](https://www.bseindia.com/stockinfo/AnnPdfOpen.aspx?Pname=abc.pdf "Raw Transcript")
+*   Jul 2026
+
+[Transcript](https://www.bseindia.com/x.pdf "Raw Transcript")
+`;
+const readCalls = parseConcallLinks(reader);
+assert.equal(readCalls.length, 2);
+assert.equal(readCalls[0].period, 'Oct 2026');
+assert.ok(readCalls[0].url.endsWith('abc.pdf'));
+const readAnns = parseAnnouncements(reader);
+assert.equal(readAnns.length, 1);
+assert.equal(readAnns[0].date, '2026-10-16');
+assert.ok(/buyback/i.test(readAnns[0].title));
+
 const calls = parseConcallLinks(html);
 assert.equal(calls.length, 2);
 assert.equal(calls[0].period, 'Oct 2026');

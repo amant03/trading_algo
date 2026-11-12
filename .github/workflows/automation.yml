@@ -334,6 +334,9 @@ jobs:
           CONCALL_PER_RUN: '12'
           CONCALL_WATCH: '36'
           CONCALL_STALE_DAYS: '21'
+          # GitHub runners cannot complete HTTP to screener.in or BSE.
+          # r.jina.ai returns the same pages and PDFs as markdown.
+          CONCALL_READER: '1'
 
       # Carry the paper-trading account forward — the ephemeral CI Postgres
       # forgets everything between runs, so the ₹1,00,000 account, positions and

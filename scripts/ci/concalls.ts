@@ -57,6 +57,7 @@ const ONLY = (process.env.CONCALL_ONLY ?? '').split(',').map((s) => s.trim().toU
 const PDF_MAX = 8 * 1024 * 1024;
 const AR_MAX = 12 * 1024 * 1024;
 const ANN_PDF_MAX = 1_200_000;
+const READER = 'https://r.jina.ai/';
 
 const PUBLIC = join(process.cwd(), 'frontend', 'public');
 const OUT_FILE = join(PUBLIC, 'concalls.json');
@@ -189,16 +190,45 @@ async function fetchText(url: string, timeoutMs = 25000): Promise<string | null>
   }
 }
 
+let filingHostDown = process.env.CONCALL_READER === '1';
+
+async function fetchAny(url: string, timeoutMs = 20000): Promise<string | null> {
+  if (!filingHostDown && !url.startsWith(READER)) {
+    const direct = await fetchText(url, Math.min(timeoutMs, 10000));
+    if (direct && direct.length > 200) return direct;
+    filingHostDown = true;
+    console.log('concalls: filing host did not answer, reading documents through the text proxy');
+  }
+  const via = url.startsWith(READER) ? await fetchText(url, timeoutMs) : await fetchText(`${READER}${url}`, timeoutMs);
+  return via ? readerText(via) : null;
+}
+
+function readerText(raw: string): string {
+  const cut = raw.indexOf('Markdown Content:');
+  return (cut >= 0 ? raw.slice(cut + 'Markdown Content:'.length) : raw).trim();
+}
+
 async function fetchPdfText(url: string, maxBytes: number): Promise<string | null> {
+  if (!filingHostDown) {
+    try {
+      const buf = await fetchBuf(url, 15000, maxBytes);
+      if (buf && buf.length >= 5 && buf.subarray(0, 4).toString() === '%PDF') {
+        const parsed = await pdfParse(buf);
+        const text = String(parsed.text ?? '')
+          .replace(/ﬁ/g, 'fi')
+          .replace(/ﬂ/g, 'fl')
+          .replace(/[ \t]+/g, ' ')
+          .trim();
+        if (text.length > 200) return text;
+      }
+    } catch { /* fall through */ }
+    filingHostDown = true;
+    console.log('concalls: filing host did not answer, reading documents through the text proxy');
+  }
   try {
-    const buf = await fetchBuf(url, 60000, maxBytes);
-    if (!buf || buf.length < 5 || buf.subarray(0, 4).toString() !== '%PDF') return null;
-    const parsed = await pdfParse(buf);
-    const text = String(parsed.text ?? '')
-      .replace(/ﬁ/g, 'fi')
-      .replace(/ﬂ/g, 'fl')
-      .replace(/[ \t]+/g, ' ')
-      .trim();
+    const via = await fetchText(`${READER}${url}`, 50000);
+    if (!via) return null;
+    const text = readerText(via);
     return text.length > 200 ? text : null;
   } catch {
     return null;
@@ -343,9 +373,24 @@ function buildImpacts(entry: Pick<ConcallEntry, 'latest' | 'prior' | 'annual' | 
   return impacts.slice(0, 8);
 }
 
+let screenerDown = process.env.CONCALL_READER === '1';
+
 async function companyPage(symbol: string): Promise<string | null> {
-  return await fetchText(`https://www.screener.in/company/${encodeURIComponent(symbol)}/consolidated/`)
-    ?? await fetchText(`https://www.screener.in/company/${encodeURIComponent(symbol)}/`);
+  const symbolPath = encodeURIComponent(symbol);
+  if (!screenerDown) {
+    for (const url of [
+      `https://www.screener.in/company/${symbolPath}/consolidated/`,
+      `https://www.screener.in/company/${symbolPath}/`,
+    ]) {
+      const html = await fetchText(url, 8000);
+      if (html && (html.includes('documents concalls') || html.includes('Annual Report'))) return html;
+    }
+    screenerDown = true;
+    console.log('concalls: screener did not answer, reading pages through the text proxy');
+  }
+  const via = await fetchText(`${READER}https://www.screener.in/company/${symbolPath}/`, 45000);
+  if (via && /Transcript|Annual Report/i.test(via)) return via;
+  return null;
 }
 
 async function readSymbol(
@@ -388,7 +433,7 @@ async function readSymbol(
       if (prevText) prior = toBrief(calls[1].period, prevUrl, mineProse(prevText));
     }
     if (ratingLink) {
-      const page = await fetchText(ratingLink.url);
+      const page = await fetchAny(ratingLink.url);
       const mined = page ? mineRating(page) : { action: 'update', summary: '' };
       ratingOut = {
         label: ratingLink.label,
