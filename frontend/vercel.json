@@ -9,6 +9,7 @@
     { "source": "/chart-events.json", "destination": "/chart-events.json" },
     { "source": "/dependencies.json", "destination": "/dependencies.json" },
     { "source": "/sig/:file", "destination": "/sig/:file" },
+    { "source": "/cc/:file", "destination": "/cc/:file" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ],
   "functions": {
@@ -65,6 +66,10 @@
     {
       "source": "/sig/(.*)",
       "headers": [{ "key": "Cache-Control", "value": "public, max-age=3600" }]
+    },
+    {
+      "source": "/cc/(.*)",
+      "headers": [{ "key": "Cache-Control", "value": "no-cache, must-revalidate" }]
     }
   ]
 }

@@ -522,6 +522,57 @@ export interface NewsArticle {
   symbol: string;
 }
 
+// ---- Concall read (scripts/ci/concalls.ts -> cc/{SYMBOL}.json) ----
+
+export interface ConcallSwot {
+  willDo: string[];
+  willEndure: string[];
+  strengths: string[];
+  weaknesses: string[];
+  opportunities: string[];
+  threats: string[];
+}
+
+export interface ConcallBrief {
+  period: string | null;
+  url: string;
+  eventDate: string | null;
+  summary: string;
+  highlights: string[];
+  swot: ConcallSwot;
+  tone: 'confident' | 'cautious' | 'mixed';
+}
+
+export interface ConcallImpact {
+  kind: 'concall' | 'annual-report' | 'credit-rating' | 'announcement';
+  label: string;
+  date: string | null;
+  url: string;
+  return1d: number | null;
+  return5d: number | null;
+  excess1d: number | null;
+  excess5d: number | null;
+  sessions: number;
+  priceBefore: number | null;
+  priceAfter: number | null;
+}
+
+export interface ConcallEntry {
+  generatedAt?: string;
+  symbol: string;
+  name: string;
+  checkedAt: string;
+  readAt: string | null;
+  latest: ConcallBrief | null;
+  prior: ConcallBrief | null;
+  annual: { label: string; url: string; year: string | null; summary: string; highlights: string[] } | null;
+  rating: { label: string; url: string; date: string | null; action: string; summary: string } | null;
+  announcements: { title: string; url: string; date: string | null; summary: string }[];
+  impacts: ConcallImpact[];
+  newsMatches: { title: string; source: string; url: string; publishedAt: string; overlap: string; aroundFiling: boolean }[];
+  transcriptUrl: string | null;
+}
+
 export interface HistoryRow {
   t: number;
   o: number;

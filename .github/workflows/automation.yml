@@ -306,6 +306,32 @@ jobs:
           DEPS_PER_RUN: '40'
           DEPS_STALE_DAYS: '7'
 
+      # Concall read: download the latest transcript, annual report, credit
+      # rating and announcements from screener.in, keep management's own
+      # lines (what they will do, what they will endure), and record the
+      # price move versus Nifty. A rotating batch, so every covered name
+      # gets a section. New transcript URLs found on the watch pass are read
+      # the same night.
+      - name: Pre-stage previous concall reads
+        if: env.MODE == 'full'
+        run: |
+          tmp=$(mktemp)
+          if curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/concalls.json -o "$tmp"; then
+            mv "$tmp" frontend/public/concalls.json
+          else
+            rm -f "$tmp"
+            echo "no previous concalls on automation-data — keeping the checkout copy if any"
+          fi
+
+      - name: Read concalls, ratings, annual reports
+        if: env.MODE == 'full'
+        continue-on-error: true
+        run: node node_modules/tsx/dist/cli.mjs scripts/ci/concalls.ts
+        env:
+          CONCALL_PER_RUN: '12'
+          CONCALL_WATCH: '36'
+          CONCALL_STALE_DAYS: '21'
+
       # Carry the paper-trading account forward — the ephemeral CI Postgres
       # forgets everything between runs, so the ₹1,00,000 account, positions and
       # P&L live on the automation-data branch instead.
@@ -429,6 +455,8 @@ jobs:
           git add frontend/public/news.json 2>/dev/null || true
           git add frontend/public/signals.json 2>/dev/null || true
           git add frontend/public/dependencies.json 2>/dev/null || true
+          git add frontend/public/concalls.json 2>/dev/null || true
+          git add frontend/public/cc/ 2>/dev/null || true
           git add frontend/public/tv-rank.json 2>/dev/null || true
           git add frontend/public/tech-screen.json 2>/dev/null || true
           git add frontend/public/chart-events.json 2>/dev/null || true

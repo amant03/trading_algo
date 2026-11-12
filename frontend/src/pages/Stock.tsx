@@ -14,6 +14,7 @@ import ScreenerPanel from '../components/ScreenerPanel';
 import KeyRatios from '../components/KeyRatios';
 import AIAnalyst from '../components/AIAnalyst';
 import DependenciesPanel from '../components/DependenciesPanel';
+import ConcallPanel from '../components/ConcallPanel';
 import FillFundaStrip from '../components/FillFundaStrip';
 import SectorNews from '../components/SectorNews';
 import {
@@ -46,7 +47,7 @@ import type {
   PeerInfo,
 } from '../types';
 
-type Tab = 'overview' | 'fundamentals' | 'dependencies' | 'technical' | 'news' | 'ai';
+type Tab = 'overview' | 'fundamentals' | 'dependencies' | 'technical' | 'news' | 'concalls' | 'ai';
 
 const RATING_COLOR: Record<string, string> = {
   'Strong Buy': 'var(--up)',
@@ -63,6 +64,7 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'technical', label: 'Technical', icon: '〄' },
   { id: 'ai', label: 'AI Analyst', icon: '✦' },
   { id: 'news', label: 'News', icon: '✉' },
+  { id: 'concalls', label: 'Concalls', icon: '☎' },
 ];
 
 const signalsCache = new Map<string, Signal[]>();
@@ -759,6 +761,7 @@ export default function Stock() {
 
           <CompetitionPanel symbol={upper} peers={peerList} onContext={(q) => { setAiPrompt(q); setTab('ai'); }} />
           <ReportsPanel symbol={upper} name={name} reports={analysis?.reports ?? null} />
+          <ConcallPanel symbol={upper} compact />
         </div>
       )}
 
@@ -892,6 +895,8 @@ export default function Stock() {
           marketCap={analysis?.marketCap ?? instrument?.marketCap ?? null}
         />
       )}
+
+      {tab === 'concalls' && <ConcallPanel symbol={upper} />}
 
       {tab === 'news' && (
         <>

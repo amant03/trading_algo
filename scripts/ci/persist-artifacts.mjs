@@ -21,7 +21,7 @@
 //
 // Reads the branch via raw.githubusercontent.com (public repo, no auth). No deps.
 
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
 
@@ -178,6 +178,48 @@ function dayScore(d) {
   return trades * 1e12 + pnl + upd / 1e9;
 }
 
+function writeConcallFiles(store) {
+  const dir = join(PUBLIC, 'cc');
+  mkdirSync(dir, { recursive: true });
+  const generatedAt = store.generatedAt || new Date().toISOString();
+  for (const [sym, entry] of Object.entries(store.data ?? {})) {
+    writeFileSync(join(dir, `${encodeURIComponent(sym)}.json`), JSON.stringify({ generatedAt, ...entry }));
+  }
+}
+
+async function unionConcalls() {
+  const local = readJson('concalls.json');
+  const remoteRaw = await fetchRemote('concalls.json');
+  if (!local?.data) return;
+  if (!remoteRaw) {
+    writeConcallFiles(local);
+    return;
+  }
+  let remote;
+  try {
+    remote = JSON.parse(remoteRaw);
+  } catch {
+    return;
+  }
+  if (!remote?.data) return;
+  const data = local.data;
+  let added = 0;
+  for (const [sym, entry] of Object.entries(remote.data)) {
+    const mine = data[sym];
+    const remoteStamp = entry?.readAt || entry?.checkedAt || '';
+    const localStamp = mine?.readAt || mine?.checkedAt || '';
+    if (!mine || remoteStamp > localStamp) {
+      data[sym] = entry;
+      added += 1;
+    }
+  }
+  local.data = data;
+  local.coverage = Object.values(data).filter((d) => d?.latest).length;
+  writeFileSync(join(PUBLIC, 'concalls.json'), JSON.stringify(local));
+  writeConcallFiles(local);
+  console.log(`merge-artifacts: concalls union +${added} remote entries -> ${local.coverage} with a transcript`);
+}
+
 async function unionDaily() {
   const local = readJson('paper/daily.json');
   const remoteRaw = await fetchRemote('paper/daily.json');
@@ -331,12 +373,13 @@ async function main() {
   await unionNews();
   await unionSignals();
   await unionDependencies();
+  await unionConcalls();
   await unionDaily();
   await unionCoverage();
   await unionSectorNews();
   await unionFiiDii();
   // sanity: refresh any gating artifact that was only present upstream
-  for (const rel of ['snapshot.json', 'paper/latest.json', 'paper/state.json', 'paper/daily.json', 'signals.json', 'dependencies.json', 'coverage.json', 'fills.json', 'sector-news.json', 'sectors.json', 'fii-dii.json']) {
+  for (const rel of ['snapshot.json', 'paper/latest.json', 'paper/state.json', 'paper/daily.json', 'signals.json', 'dependencies.json', 'concalls.json', 'coverage.json', 'fills.json', 'sector-news.json', 'sectors.json', 'fii-dii.json']) {
     if (!existsSync(join(PUBLIC, rel))) {
       const remote = await fetchRemote(rel);
       if (remote) {
@@ -345,6 +388,8 @@ async function main() {
       }
     }
   }
+  const concalls = readJson('concalls.json');
+  if (concalls?.data) writeConcallFiles(concalls);
   // keep git porcelain quiet if we wrote files (avoids CRLF warnings on Windows)
   execSync('git add frontend/public 2>/dev/null || true', { stdio: 'ignore' });
 }

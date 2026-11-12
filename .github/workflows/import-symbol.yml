@@ -32,6 +32,14 @@ jobs:
             -o frontend/public/analysis.json || echo "no analysis yet"
           curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/news.json \
             -o frontend/public/news.json || echo "no news yet"
+          tmp=$(mktemp)
+          if curl -sfL https://raw.githubusercontent.com/amant03/trading_algo/automation-data/frontend/public/concalls.json -o "$tmp"; then
+            mv "$tmp" frontend/public/concalls.json
+            node node_modules/tsx/dist/cli.mjs scripts/ci/concalls.ts --split-only || true
+          else
+            rm -f "$tmp"
+            echo "no concall store yet"
+          fi
 
       - name: Import symbol
         run: node node_modules/tsx/dist/cli.mjs scripts/ci/import-stock.ts
@@ -42,7 +50,7 @@ jobs:
         run: |
           git config user.name "automation-bot"
           git config user.email "actions@github.com"
-          git add frontend/public/analysis.json frontend/public/news.json 2>/dev/null || true
+          git add frontend/public/analysis.json frontend/public/news.json frontend/public/concalls.json frontend/public/cc 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "Nothing new to commit"
             exit 0
