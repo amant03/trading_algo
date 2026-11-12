@@ -24,9 +24,14 @@
 //   CONCALL_ONLY        comma-separated symbols (those are read in full)
 
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs';
+import dns from 'dns';
 import http from 'http';
 import https from 'https';
 import { join } from 'path';
+
+// GitHub runners have IPv6. Screener's AAAA path fails immediately from
+// those machines, so every company page came back empty. Force IPv4.
+dns.setDefaultResultOrder('ipv4first');
 import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 import {
   matchNews,
@@ -130,7 +135,7 @@ function httpGet(url: string, headers: Record<string, string>, timeoutMs: number
       resolve(v);
     };
     const lib = url.startsWith('http:') ? http : https;
-    const req = lib.get(url, { headers, timeout: timeoutMs }, (res) => {
+    const req = lib.get(url, { headers, timeout: timeoutMs, family: 4 }, (res) => {
       const status = res.statusCode ?? 0;
       const loc = res.headers.location;
       if (status >= 300 && status < 400 && loc && redirects < 4) {
@@ -154,7 +159,10 @@ function httpGet(url: string, headers: Record<string, string>, timeoutMs: number
       res.on('end', () => finish(tooBig ? null : { status, body: Buffer.concat(chunks) }));
       res.on('error', () => finish(null));
     });
-    req.on('error', () => finish(null));
+    req.on('error', (err: Error) => {
+      console.log(`concalls: net ${err.message} ${url.slice(0, 90)}`);
+      finish(null);
+    });
     req.on('timeout', () => {
       req.destroy();
       finish(null);
@@ -171,7 +179,10 @@ async function fetchBuf(url: string, timeoutMs: number, maxBytes: number): Promi
 async function fetchText(url: string, timeoutMs = 25000): Promise<string | null> {
   try {
     const res = await httpGet(url, { 'User-Agent': UA, Accept: 'text/html' }, timeoutMs, 3_000_000);
-    if (!res || res.status < 200 || res.status >= 300) return null;
+    if (!res || res.status < 200 || res.status >= 300) {
+      console.log(`concalls: HTTP ${res?.status ?? 'none'} ${url.slice(0, 90)}`);
+      return null;
+    }
     return res.body.toString('utf8');
   } catch {
     return null;

@@ -69,6 +69,9 @@ jobs:
       # Real NSE data overlay (Yahoo Finance, free): real daily history +
       # live quotes on top of the simulated 1m feed that drives strategies.
       REAL_DATA: '1'
+      # Screener's IPv6 address is unreachable from GitHub runners. Node 20
+      # fetch prefers it and the page fetch fails in a few hundred ms.
+      NODE_OPTIONS: '--dns-result-order=ipv4first'
 
     steps:
       - name: Resolve run mode
