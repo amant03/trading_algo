@@ -1,51 +1,51 @@
 {
-  "timestamp": "2026-11-12T19:18:38.874Z",
+  "timestamp": "2026-11-12T19:41:50.811Z",
   "instruments": 52,
   "candles": 57954,
-  "signals": 721,
-  "orders": 117,
-  "trades": 117,
-  "openPositions": 15,
-  "news": 25,
+  "signals": 27,
+  "orders": 6,
+  "trades": 6,
+  "openPositions": 2,
+  "news": 311,
   "account": {
-    "cash_balance": "70895.77",
-    "equity": "70895.77"
+    "cash_balance": "94870.52",
+    "equity": "99992.32"
   },
   "latestSignals": [
     {
-      "symbol": "ICICIBANK",
+      "symbol": "RELIANCE",
       "direction": "BUY",
       "strategy": "donchian_breakout",
-      "reason": "Donchian breakout: close above 20-bar high 1573.35",
-      "ts": "2026-11-12T19:18:35.885Z"
+      "reason": "Donchian breakout: close above 20-bar high 1338.40",
+      "ts": "2026-11-12T19:41:42.037Z"
     },
     {
-      "symbol": "BHARTIARTL",
+      "symbol": "RELIANCE",
       "direction": "BUY",
+      "strategy": "ma_cross",
+      "reason": "Golden cross: SMA20 crossed above SMA50",
+      "ts": "2026-11-12T19:41:36.036Z"
+    },
+    {
+      "symbol": "TCS",
+      "direction": "BUY",
+      "strategy": "ma_cross",
+      "reason": "Golden cross: SMA20 crossed above SMA50",
+      "ts": "2026-11-12T19:41:33.036Z"
+    },
+    {
+      "symbol": "TCS",
+      "direction": "SELL",
       "strategy": "bb_breakout",
-      "reason": "Close broke above upper Bollinger band (2x std dev)",
-      "ts": "2026-11-12T19:18:35.885Z"
+      "reason": "Close broke below lower Bollinger band (2x std dev)",
+      "ts": "2026-11-12T19:41:24.035Z"
     },
     {
-      "symbol": "BHARTIARTL",
-      "direction": "BUY",
-      "strategy": "donchian_breakout",
-      "reason": "Donchian breakout: close above 20-bar high 2104.35",
-      "ts": "2026-11-12T19:18:35.885Z"
-    },
-    {
-      "symbol": "TITAN",
+      "symbol": "TCS",
       "direction": "SELL",
       "strategy": "donchian_breakout",
-      "reason": "Donchian breakdown: close below 20-bar low 4931.10",
-      "ts": "2026-11-12T19:18:35.885Z"
-    },
-    {
-      "symbol": "NESTLEIND",
-      "direction": "SELL",
-      "strategy": "donchian_breakout",
-      "reason": "Donchian breakdown: close below 20-bar low 1290.30",
-      "ts": "2026-11-12T19:18:35.885Z"
+      "reason": "Donchian breakdown: close below 20-bar low 2488.25",
+      "ts": "2026-11-12T19:41:24.035Z"
     }
   ]
 }
