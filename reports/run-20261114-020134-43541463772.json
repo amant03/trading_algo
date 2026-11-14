@@ -1,0 +1,51 @@
+{
+  "timestamp": "2026-11-14T01:39:14.566Z",
+  "instruments": 52,
+  "candles": 57850,
+  "signals": 719,
+  "orders": 104,
+  "trades": 104,
+  "openPositions": 14,
+  "news": 25,
+  "account": {
+    "cash_balance": "60563.14",
+    "equity": "60563.14"
+  },
+  "latestSignals": [
+    {
+      "symbol": "ICICIBANK",
+      "direction": "BUY",
+      "strategy": "donchian_breakout",
+      "reason": "Donchian breakout: close above 20-bar high 1591.85",
+      "ts": "2026-11-14T01:39:11.808Z"
+    },
+    {
+      "symbol": "BHARTIARTL",
+      "direction": "BUY",
+      "strategy": "bb_breakout",
+      "reason": "Close broke above upper Bollinger band (2x std dev)",
+      "ts": "2026-11-14T01:39:11.808Z"
+    },
+    {
+      "symbol": "BHARTIARTL",
+      "direction": "BUY",
+      "strategy": "donchian_breakout",
+      "reason": "Donchian breakout: close above 20-bar high 2091.35",
+      "ts": "2026-11-14T01:39:11.808Z"
+    },
+    {
+      "symbol": "TITAN",
+      "direction": "SELL",
+      "strategy": "donchian_breakout",
+      "reason": "Donchian breakdown: close below 20-bar low 4883.40",
+      "ts": "2026-11-14T01:39:11.808Z"
+    },
+    {
+      "symbol": "NESTLEIND",
+      "direction": "SELL",
+      "strategy": "donchian_breakout",
+      "reason": "Donchian breakdown: close below 20-bar low 1263.10",
+      "ts": "2026-11-14T01:39:11.808Z"
+    }
+  ]
+}
