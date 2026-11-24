@@ -1,0 +1,51 @@
+{
+  "timestamp": "2026-11-24T05:29:42.888Z",
+  "instruments": 52,
+  "candles": 58046,
+  "signals": 742,
+  "orders": 100,
+  "trades": 100,
+  "openPositions": 14,
+  "news": 223,
+  "account": {
+    "cash_balance": "62511.18",
+    "equity": "113466.21"
+  },
+  "latestSignals": [
+    {
+      "symbol": "ITC",
+      "direction": "SELL",
+      "strategy": "donchian_breakout",
+      "reason": "Donchian breakdown: close below 20-bar low 300.15",
+      "ts": "2026-11-24T05:29:40.883Z"
+    },
+    {
+      "symbol": "AXISBANK",
+      "direction": "SELL",
+      "strategy": "ma_cross",
+      "reason": "Death cross: SMA20 crossed below SMA50",
+      "ts": "2026-11-24T05:29:40.883Z"
+    },
+    {
+      "symbol": "TATAMOTORS",
+      "direction": "SELL",
+      "strategy": "bb_breakout",
+      "reason": "Close broke below lower Bollinger band (2x std dev)",
+      "ts": "2026-11-24T05:29:40.883Z"
+    },
+    {
+      "symbol": "HDFCLIFE",
+      "direction": "BUY",
+      "strategy": "rsi_reversal",
+      "reason": "RSI(14) 35.6 rebounded out of oversold",
+      "ts": "2026-11-24T05:29:40.883Z"
+    },
+    {
+      "symbol": "INDUSINDBK",
+      "direction": "BUY",
+      "strategy": "donchian_breakout",
+      "reason": "Donchian breakout: close above 20-bar high 972.25",
+      "ts": "2026-11-24T05:29:40.883Z"
+    }
+  ]
+}

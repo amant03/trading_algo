@@ -1,51 +1,51 @@
 {
-  "timestamp": "2026-11-18T03:07:24.510Z",
+  "timestamp": "2026-11-24T05:29:42.888Z",
   "instruments": 52,
-  "candles": 58054,
-  "signals": 737,
-  "orders": 108,
-  "trades": 108,
+  "candles": 58046,
+  "signals": 742,
+  "orders": 100,
+  "trades": 100,
   "openPositions": 14,
-  "news": 25,
+  "news": 223,
   "account": {
-    "cash_balance": "73121.01",
-    "equity": "116740.23"
+    "cash_balance": "62511.18",
+    "equity": "113466.21"
   },
   "latestSignals": [
     {
-      "symbol": "MARUTI",
+      "symbol": "ITC",
       "direction": "SELL",
       "strategy": "donchian_breakout",
-      "reason": "Donchian breakdown: close below 20-bar low 12720.80",
-      "ts": "2026-11-18T03:07:22.709Z"
+      "reason": "Donchian breakdown: close below 20-bar low 300.15",
+      "ts": "2026-11-24T05:29:40.883Z"
     },
     {
-      "symbol": "NESTLEIND",
+      "symbol": "AXISBANK",
+      "direction": "SELL",
+      "strategy": "ma_cross",
+      "reason": "Death cross: SMA20 crossed below SMA50",
+      "ts": "2026-11-24T05:29:40.883Z"
+    },
+    {
+      "symbol": "TATAMOTORS",
       "direction": "SELL",
       "strategy": "bb_breakout",
       "reason": "Close broke below lower Bollinger band (2x std dev)",
-      "ts": "2026-11-18T03:07:22.709Z"
+      "ts": "2026-11-24T05:29:40.883Z"
     },
     {
-      "symbol": "HINDALCO",
+      "symbol": "HDFCLIFE",
+      "direction": "BUY",
+      "strategy": "rsi_reversal",
+      "reason": "RSI(14) 35.6 rebounded out of oversold",
+      "ts": "2026-11-24T05:29:40.883Z"
+    },
+    {
+      "symbol": "INDUSINDBK",
       "direction": "BUY",
       "strategy": "donchian_breakout",
-      "reason": "Donchian breakout: close above 20-bar high 929.15",
-      "ts": "2026-11-18T03:07:22.709Z"
-    },
-    {
-      "symbol": "ADANIENT",
-      "direction": "SELL",
-      "strategy": "donchian_breakout",
-      "reason": "Donchian breakdown: close below 20-bar low 2741.30",
-      "ts": "2026-11-18T03:07:22.709Z"
-    },
-    {
-      "symbol": "IRCTC",
-      "direction": "SELL",
-      "strategy": "donchian_breakout",
-      "reason": "Donchian breakdown: close below 20-bar low 450.25",
-      "ts": "2026-11-18T03:07:22.709Z"
+      "reason": "Donchian breakout: close above 20-bar high 972.25",
+      "ts": "2026-11-24T05:29:40.883Z"
     }
   ]
 }
