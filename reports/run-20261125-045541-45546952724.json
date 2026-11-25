@@ -1,0 +1,51 @@
+{
+  "timestamp": "2026-11-25T04:32:09.529Z",
+  "instruments": 52,
+  "candles": 58108,
+  "signals": 433,
+  "orders": 102,
+  "trades": 102,
+  "openPositions": 14,
+  "news": 25,
+  "account": {
+    "cash_balance": "70756.96",
+    "equity": "106959.90"
+  },
+  "latestSignals": [
+    {
+      "symbol": "ITC",
+      "direction": "SELL",
+      "strategy": "donchian_breakout",
+      "reason": "Donchian breakdown: close below 20-bar low 305.70",
+      "ts": "2026-11-25T04:32:08.870Z"
+    },
+    {
+      "symbol": "AXISBANK",
+      "direction": "SELL",
+      "strategy": "ma_cross",
+      "reason": "Death cross: SMA20 crossed below SMA50",
+      "ts": "2026-11-25T04:32:08.870Z"
+    },
+    {
+      "symbol": "TATAMOTORS",
+      "direction": "SELL",
+      "strategy": "bb_breakout",
+      "reason": "Close broke below lower Bollinger band (2x std dev)",
+      "ts": "2026-11-25T04:32:08.870Z"
+    },
+    {
+      "symbol": "ADANIENT",
+      "direction": "SELL",
+      "strategy": "donchian_breakout",
+      "reason": "Donchian breakdown: close below 20-bar low 2694.05",
+      "ts": "2026-11-25T04:32:08.870Z"
+    },
+    {
+      "symbol": "MARUTI",
+      "direction": "SELL",
+      "strategy": "donchian_breakout",
+      "reason": "Donchian breakdown: close below 20-bar low 14208.00",
+      "ts": "2026-11-25T04:32:08.870Z"
+    }
+  ]
+}
