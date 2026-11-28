@@ -1,0 +1,51 @@
+{
+  "timestamp": "2026-11-28T03:30:24.389Z",
+  "instruments": 52,
+  "candles": 58054,
+  "signals": 38,
+  "orders": 9,
+  "trades": 9,
+  "openPositions": 3,
+  "news": 311,
+  "account": {
+    "cash_balance": "92078.67",
+    "equity": "99988.12"
+  },
+  "latestSignals": [
+    {
+      "symbol": "HDFCBANK",
+      "direction": "BUY",
+      "strategy": "donchian_breakout",
+      "reason": "Donchian breakout: close above 20-bar high 861.15",
+      "ts": "2026-11-28T03:30:23.485Z"
+    },
+    {
+      "symbol": "RELIANCE",
+      "direction": "BUY",
+      "strategy": "donchian_breakout",
+      "reason": "Donchian breakout: close above 20-bar high 1385.70",
+      "ts": "2026-11-28T03:30:17.485Z"
+    },
+    {
+      "symbol": "HDFCBANK",
+      "direction": "BUY",
+      "strategy": "donchian_breakout",
+      "reason": "Donchian breakout: close above 20-bar high 860.15",
+      "ts": "2026-11-28T03:30:11.485Z"
+    },
+    {
+      "symbol": "RELIANCE",
+      "direction": "BUY",
+      "strategy": "ma_cross",
+      "reason": "Golden cross: SMA20 crossed above SMA50",
+      "ts": "2026-11-28T03:30:11.485Z"
+    },
+    {
+      "symbol": "HDFCBANK",
+      "direction": "BUY",
+      "strategy": "bb_breakout",
+      "reason": "Close broke above upper Bollinger band (2x std dev)",
+      "ts": "2026-11-28T03:30:08.485Z"
+    }
+  ]
+}

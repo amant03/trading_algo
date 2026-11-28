@@ -1,51 +1,51 @@
 {
-  "timestamp": "2026-11-25T04:32:09.529Z",
+  "timestamp": "2026-11-28T03:30:24.389Z",
   "instruments": 52,
-  "candles": 58108,
-  "signals": 433,
-  "orders": 102,
-  "trades": 102,
-  "openPositions": 14,
-  "news": 25,
+  "candles": 58054,
+  "signals": 38,
+  "orders": 9,
+  "trades": 9,
+  "openPositions": 3,
+  "news": 311,
   "account": {
-    "cash_balance": "70756.96",
-    "equity": "106959.90"
+    "cash_balance": "92078.67",
+    "equity": "99988.12"
   },
   "latestSignals": [
     {
-      "symbol": "ITC",
-      "direction": "SELL",
+      "symbol": "HDFCBANK",
+      "direction": "BUY",
       "strategy": "donchian_breakout",
-      "reason": "Donchian breakdown: close below 20-bar low 305.70",
-      "ts": "2026-11-25T04:32:08.870Z"
+      "reason": "Donchian breakout: close above 20-bar high 861.15",
+      "ts": "2026-11-28T03:30:23.485Z"
     },
     {
-      "symbol": "AXISBANK",
-      "direction": "SELL",
+      "symbol": "RELIANCE",
+      "direction": "BUY",
+      "strategy": "donchian_breakout",
+      "reason": "Donchian breakout: close above 20-bar high 1385.70",
+      "ts": "2026-11-28T03:30:17.485Z"
+    },
+    {
+      "symbol": "HDFCBANK",
+      "direction": "BUY",
+      "strategy": "donchian_breakout",
+      "reason": "Donchian breakout: close above 20-bar high 860.15",
+      "ts": "2026-11-28T03:30:11.485Z"
+    },
+    {
+      "symbol": "RELIANCE",
+      "direction": "BUY",
       "strategy": "ma_cross",
-      "reason": "Death cross: SMA20 crossed below SMA50",
-      "ts": "2026-11-25T04:32:08.870Z"
+      "reason": "Golden cross: SMA20 crossed above SMA50",
+      "ts": "2026-11-28T03:30:11.485Z"
     },
     {
-      "symbol": "TATAMOTORS",
-      "direction": "SELL",
+      "symbol": "HDFCBANK",
+      "direction": "BUY",
       "strategy": "bb_breakout",
-      "reason": "Close broke below lower Bollinger band (2x std dev)",
-      "ts": "2026-11-25T04:32:08.870Z"
-    },
-    {
-      "symbol": "ADANIENT",
-      "direction": "SELL",
-      "strategy": "donchian_breakout",
-      "reason": "Donchian breakdown: close below 20-bar low 2694.05",
-      "ts": "2026-11-25T04:32:08.870Z"
-    },
-    {
-      "symbol": "MARUTI",
-      "direction": "SELL",
-      "strategy": "donchian_breakout",
-      "reason": "Donchian breakdown: close below 20-bar low 14208.00",
-      "ts": "2026-11-25T04:32:08.870Z"
+      "reason": "Close broke above upper Bollinger band (2x std dev)",
+      "ts": "2026-11-28T03:30:08.485Z"
     }
   ]
 }
